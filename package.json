@@ -1,0 +1,21 @@
+{
+  "name": "xinchao-dynamic-mind",
+  "version": "2.0.0",
+  "description": "Independent dynamic state engine for AI agents: drives, thought pool, fatigue, sleep and intent.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "ai-agent",
+    "dynamic-mind",
+    "state-machine",
+    "mcp",
+    "self-hosted"
+  ]
+}

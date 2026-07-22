@@ -1,0 +1,9 @@
+.env
+node_modules/
+*.log
+.DS_Store
+state/*
+!state/.gitkeep
+memory-data/*
+!memory-data/.gitkeep
+.backups/
