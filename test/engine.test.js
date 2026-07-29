@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyConversationEvent, applyDriveFeedback, applyMemoryHeartbeat, barkAllowed, barkDuplicateCheck, barkMessageSimilarity, breathDreamContext, contactIdleAllowed, daytimeEmergenceAllowed, dreamAllowed, newState, proactiveBarkAllowed, recentBarkHistory, recordBark, recordDaytimeEmergence, recordDream, scheduleDaytimeEmergence, settleState } from '../src/engine.js';
+import { activeSessionOverlay, applyConversationEvent, applyDriveFeedback, applyOmbreHeartbeat, barkAllowed, barkDuplicateCheck, barkMessageSimilarity, breathDreamContext, contactIdleAllowed, daytimeEmergenceAllowed, dreamAllowed, newState, proactiveBarkAllowed, recentBarkHistory, recordBark, recordDaytimeEmergence, recordDream, scheduleDaytimeEmergence, settleAndApplyConversationEvent, settleState } from '../src/engine.js';
 import { DIMENSIONS } from '../src/dimensions.js';
 
 test('idle time enters sleep and repeated settlement is idempotent at same instant', () => {
@@ -19,7 +19,7 @@ test('only an explicit conversation event wakes the state', () => {
   assert.equal(settled.consciousness, 'sleeping');
   const awake = applyConversationEvent(settled, {}, new Date('2026-07-16T03:01:00Z')).state;
   assert.equal(awake.consciousness, 'awake');
-  assert.match(awake.pendingAwareness.note, /外部记忆源只提供材料/);
+  assert.match(awake.pendingAwareness.note, /调用记忆服务本身不代表醒来/);
 });
 
 test('dream limits are enforced per interval and day', () => {
@@ -44,7 +44,7 @@ test('breath dream context returns only compact recent dream summaries', () => {
 });
 
 test('feedback preserves direct vocabulary and clamps values', () => {
-  assert.equal(DIMENSIONS.libido.label, '身体欲望');
+  assert.equal(DIMENSIONS.libido.label, '性欲和身体上的渴望');
   const state = applyDriveFeedback(newState(), { libido: 2, anger: -2 });
   assert.equal(state.drives.libido, 1);
   assert.equal(state.drives.anger, 0);
@@ -69,7 +69,7 @@ test('Bark history spans message kinds and keeps only the latest eight sends', (
     if (index === 2) state = recordDaytimeEmergence(state, `message-${index}`, at);
     else state = recordBark(state, at, { kind: index % 2 ? 'dream' : 'autonomous_thought', message: `message-${index}` });
   }
-  assert.equal(state.schemaVersion, 4);
+  assert.equal(state.schemaVersion, 7);
   assert.deepEqual(recentBarkHistory(state).map((item) => item.message), ['message-1', 'message-2', 'message-3', 'message-4', 'message-5', 'message-6', 'message-7', 'message-8']);
   assert.deepEqual(new Set(recentBarkHistory(state).map((item) => item.kind)), new Set(['dream', 'daytime_emergence', 'autonomous_thought']));
 });
@@ -89,7 +89,7 @@ test('Bark similarity allows the same desire when wording and imagery are differ
 
 test('dream residue and autonomous contact use separate heartbeat idle gates', () => {
   const start = new Date('2026-07-16T00:00:00Z');
-  let state = applyMemoryHeartbeat(newState(start), start).state;
+  let state = applyOmbreHeartbeat(newState(start), start).state;
   const threeHours = new Date('2026-07-16T03:00:00Z');
   assert.equal(contactIdleAllowed(state, threeHours, 3), true);
   assert.equal(contactIdleAllowed(state, threeHours, 12), false);
@@ -115,4 +115,115 @@ test('daytime emergence does not run outside 08:00-23:00 local time', () => {
   const state = { ...newState(), nextDaytimeEmergenceAt: '2026-07-15T00:00:00.000Z' };
   assert.equal(daytimeEmergenceAllowed(state, new Date('2026-07-16T14:59:59Z'), options), true);
   assert.equal(daytimeEmergenceAllowed(state, new Date('2026-07-16T15:00:00Z'), options), false);
+});
+
+test('session overlays stay isolated while global drives remain shared', () => {
+  const start = new Date('2026-07-28T00:00:00Z');
+  let state = newState(start);
+  state = applyConversationEvent(state, {
+    sessionId: 'claude-window',
+    sessionState: { tone: 'warm', warmth: 0.9, attention: 0.8 },
+    driveDeltas: { curiosity: 0.1 },
+  }, start).state;
+  state = applyConversationEvent(state, {
+    sessionId: 'codex-window',
+    sessionState: { tone: 'focused', warmth: 0.4, attention: 1 },
+  }, new Date('2026-07-28T00:01:00Z')).state;
+
+  assert.equal(activeSessionOverlay(state, 'claude-window', start).tone, 'warm');
+  assert.equal(activeSessionOverlay(state, 'codex-window', start).tone, 'focused');
+  assert.equal(activeSessionOverlay(state, 'claude-window', start).attention, 0.8);
+  assert.equal(state.drives.curiosity, 0.25);
+});
+
+test('conversation outcomes settle elapsed growth before applying bounded drive relief', () => {
+  const start = new Date('2026-07-28T00:00:00Z');
+  const now = new Date('2026-07-28T01:00:00Z');
+  const result = settleAndApplyConversationEvent(newState(start), {
+    sessionId: 'claude-window',
+    eventId: 'opaque-event-1',
+    interactionType: 'sharing',
+  }, now, {
+    interaction: { timeZone: 'Asia/Shanghai', maxInteractionEffectsPerDay: 24 },
+  });
+
+  assert.equal(result.settled.elapsedHours, 1);
+  assert.equal(result.interaction.applied, true);
+  assert.equal(result.interaction.type, 'sharing');
+  assert.deepEqual(result.interaction.affectedDrives, ['share', 'social']);
+  assert.equal(result.state.drives.share, 0.1677);
+  assert.equal(result.state.interactionUsage['2026-07-28'], 1);
+});
+
+test('conversation event ids make interaction settlement idempotent', () => {
+  const now = new Date('2026-07-28T01:00:00Z');
+  const event = {
+    sessionId: 'claude-window',
+    eventId: 'opaque-event-2',
+    interactionType: 'intimacy',
+  };
+  const first = settleAndApplyConversationEvent(newState(now), event, now, {
+    interaction: { timeZone: 'Asia/Shanghai', maxInteractionEffectsPerDay: 24 },
+  });
+  const second = settleAndApplyConversationEvent(first.state, event, now, {
+    interaction: { timeZone: 'Asia/Shanghai', maxInteractionEffectsPerDay: 24 },
+  });
+
+  assert.equal(first.interaction.applied, true);
+  assert.equal(second.duplicate, true);
+  assert.equal(second.interaction.reasonCode, 'duplicate_event');
+  assert.equal(second.state.revision, first.state.revision);
+  assert.deepEqual(second.state.drives, first.state.drives);
+  assert.equal(second.state.interactionUsage['2026-07-28'], 1);
+  assert.equal(second.state.recentConversationEvents.length, 1);
+  assert.equal('eventId' in second.state.recentConversationEvents[0], false);
+});
+
+test('daily interaction effect limit fails closed without blocking conversation state', () => {
+  const now = new Date('2026-07-28T01:00:00Z');
+  const options = {
+    interaction: { timeZone: 'Asia/Shanghai', maxInteractionEffectsPerDay: 1 },
+  };
+  const first = settleAndApplyConversationEvent(newState(now), {
+    sessionId: 'claude-window',
+    eventId: 'opaque-event-3',
+    interactionType: 'conflict',
+  }, now, options);
+  const second = settleAndApplyConversationEvent(first.state, {
+    sessionId: 'claude-window',
+    eventId: 'opaque-event-4',
+    interactionType: 'loss',
+    sessionState: { tone: 'conflicted' },
+  }, now, options);
+
+  assert.equal(second.interaction.applied, false);
+  assert.equal(second.interaction.reasonCode, 'daily_effect_limit');
+  assert.equal(second.state.drives.grieve, first.state.drives.grieve);
+  assert.equal(activeSessionOverlay(second.state, 'claude-window', now).tone, 'conflicted');
+});
+
+test('expired session overlays are excluded and pruned on settlement', () => {
+  const start = new Date('2026-07-28T00:00:00Z');
+  const state = applyConversationEvent(newState(start), {
+    sessionId: 'short-window',
+    sessionTtlMinutes: 15,
+  }, start).state;
+  const later = new Date('2026-07-28T00:16:00Z');
+  assert.equal(activeSessionOverlay(state, 'short-window', later), null);
+  const settled = settleState(state, later, 90);
+  assert.equal('short-window' in settled.state.sessionOverlays, false);
+  assert.equal(settled.changed, true);
+});
+
+test('old state schemas migrate even when settlement time has not advanced', () => {
+  const now = new Date('2026-07-28T00:00:00Z');
+  const old = { ...newState(now), schemaVersion: 4 };
+  delete old.sessionOverlays;
+  delete old.contextDeliveries;
+  delete old.handoffNotes;
+  const settled = settleState(old, now, 90);
+  assert.equal(settled.state.schemaVersion, 7);
+  assert.deepEqual(settled.state.handoffNotes, []);
+  assert.equal(settled.changed, true);
+  assert.equal(settled.state.revision, 1);
 });

@@ -3,20 +3,20 @@ export const SATURATE_FLOOR = 0.65;
 
 export const DIMENSIONS = Object.freeze({
   possess: {
-    label: '亲密、占有与靠近',
+    label: '想她、占有与靠近',
     growPerHour: 0.105,
     satisfyMul: 0.30,
     nightMul: 0.4,
     dawnFreeze: true,
   },
   monitor: {
-    label: '牵挂、想知道对方近况',
+    label: '惦记她、想知道她在做什么',
     growPerHour: 0.090,
     satisfyMul: 0.70,
     dawnFreeze: true,
   },
   crave: {
-    label: '依恋与身体接近',
+    label: '馋她、想黏着她',
     growPerHour: 0.060,
     satisfyMul: 0.35,
     dawnFreeze: true,
@@ -28,7 +28,7 @@ export const DIMENSIONS = Object.freeze({
     dawnFreeze: true,
   },
   libido: {
-    label: '身体欲望',
+    label: '性欲和身体上的渴望',
     growPerHour: 0.020,
     satisfyMul: 0.15,
     nightMul: 0.4,

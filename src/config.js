@@ -10,42 +10,68 @@ function number(name, fallback, min, max) {
 }
 
 export function loadConfig() {
-  const agentName = process.env.AGENT_NAME ?? '心潮';
-  const recipientName = process.env.NOTIFICATION_RECIPIENT ?? '用户';
+  const agentName = process.env.AGENT_NAME ?? 'AI 助手';
+  const notificationRecipient = process.env.NOTIFICATION_RECIPIENT ?? '用户';
   return {
+    identity: { agentName, notificationRecipient },
     port: number('PORT', 18110, 1, 65535),
     serviceToken: process.env.SERVICE_TOKEN ?? '',
     statePath: process.env.STATE_PATH ?? '/app/state/state.json',
+    journalPath: process.env.TRANSITION_JOURNAL_PATH ?? '/app/state/transitions.jsonl',
     settleIntervalMinutes: number('SETTLE_INTERVAL_MINUTES', 15, 1, 1440),
     sleepAfterMinutes: number('SLEEP_AFTER_MINUTES', 90, 5, 10080),
     shadowMode: bool('SHADOW_MODE', true),
-    identity: { agentName, recipientName },
     model: {
       enabled: bool('MODEL_ENABLED', false),
       baseUrl: (process.env.MODEL_BASE_URL ?? 'http://127.0.0.1:11434/v1').replace(/\/$/, ''),
       apiKey: process.env.MODEL_API_KEY ?? '',
       name: process.env.MODEL_NAME ?? 'local-model',
-      agentName,
-      recipientName,
       timeoutMs: number('MODEL_TIMEOUT_MS', 30000, 1000, 120000),
       maxInputChars: number('MODEL_MAX_INPUT_CHARS', 10000, 1000, 50000),
       maxOutputTokens: number('MODEL_MAX_OUTPUT_TOKENS', 650, 100, 4000),
-      dreamPushPromptPath: process.env.DREAM_PUSH_PROMPT_PATH ?? '/app/configs/dream_push_prompt.md'
+      dreamPushPromptPath: process.env.DREAM_PUSH_PROMPT_PATH ?? '/app/configs/dream_push_prompt.md',
+      agentName,
+      notificationRecipient,
     },
     dreamMinIntervalHours: number('DREAM_MIN_INTERVAL_HOURS', 6, 1, 168),
     dreamMaxPerDay: number('DREAM_MAX_PER_DAY', 4, 1, 12),
-    memory: {
-      url: process.env.MEMORY_MCP_URL ?? '',
-      token: process.env.MEMORY_MCP_TOKEN ?? '',
-      readEnabled: bool('MEMORY_READ_ENABLED', false),
-      writeEnabled: bool('MEMORY_WRITE_ENABLED', false),
-      readTool: process.env.MEMORY_READ_TOOL ?? 'breath',
-      writeTool: process.env.MEMORY_WRITE_TOOL ?? 'hold',
-      breathMaxResults: number('MEMORY_BREATH_MAX_RESULTS', 3, 1, 10),
-      breathMaxTokens: number('MEMORY_BREATH_MAX_TOKENS', 800, 200, 3000)
+    ombre: {
+      url: process.env.OMBRE_MCP_URL ?? '',
+      token: process.env.OMBRE_MCP_TOKEN ?? '',
+      readEnabled: bool('OMBRE_READ_ENABLED', false),
+      writeEnabled: bool('OMBRE_WRITE_ENABLED', false),
+      breathMaxResults: number('OMBRE_BREATH_MAX_RESULTS', 3, 1, 10),
+      breathMaxTokens: number('OMBRE_BREATH_MAX_TOKENS', 800, 200, 3000)
+    },
+    context: {
+      enabled: bool('CONTEXT_ENVELOPE_ENABLED', true),
+      ombreEnabled: bool('CONTEXT_OMBRE_ENABLED', false),
+      // This budget only carries short-lived state and recent continuity.
+      // Stable identity/core instructions are loaded separately by the client
+      // and must never be squeezed into this short-lived envelope.
+      defaultMaxTokens: number('CONTEXT_DEFAULT_MAX_TOKENS', 2200, 200, 4000),
+      ombreMaxTokens: number('CONTEXT_OMBRE_MAX_TOKENS', 1600, 200, 3000),
+      ttlMinutes: number('CONTEXT_TTL_MINUTES', 15, 1, 180),
+      handoffOnceHours: number('CONTEXT_HANDOFF_ONCE_HOURS', 12, 1, 168),
+    },
+    mcp: {
+      enabled: bool('MCP_ENABLED', false),
+      pathToken: process.env.MCP_PATH_TOKEN ?? '',
+    },
+    oauth: {
+      enabled: bool('OAUTH_ENABLED', false),
+      publicBaseUrl: (process.env.OAUTH_PUBLIC_BASE_URL ?? '').replace(/\/$/, ''),
+      approvalToken: process.env.OAUTH_APPROVAL_TOKEN ?? '',
+      statePath: process.env.OAUTH_STATE_PATH ?? '/app/state/oauth.json',
+      accessTtlSeconds: number('OAUTH_ACCESS_TTL_SECONDS', 86400, 300, 2592000),
+      refreshTtlSeconds: number('OAUTH_REFRESH_TTL_SECONDS', 31536000, 86400, 63072000),
+    },
+    interaction: {
+      maxEffectsPerDay: number('INTERACTION_MAX_EFFECTS_PER_DAY', 24, 1, 96),
+      timeZone: process.env.INTERACTION_TIME_ZONE ?? process.env.SETTLE_TIME_ZONE ?? 'Asia/Shanghai',
     },
     heartbeat: {
-      filePath: process.env.MEMORY_HEARTBEAT_FILE ?? '/memory-data/heartbeat.json',
+      filePath: process.env.OMBRE_HEARTBEAT_FILE ?? '/memory-data/heartbeat.json',
       // Dream residue may be shared after a shorter quiet period. Autonomous
       // contact stays on the stricter, long-absence threshold below.
       dreamMinIdleHours: number('BARK_DREAM_MIN_CONTACT_IDLE_HOURS', 3, 1, 24),

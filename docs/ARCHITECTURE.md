@@ -1,54 +1,82 @@
-# 心潮 2.0 架构
+# 心潮 2.3.1 架构
 
 ## 设计目标
 
-心潮把“对话生成”与“持续状态”拆开。语言模型可以随时替换，而驱动力、念头池、疲惫、睡眠与意图保存在独立状态机中。
+心潮把“语言生成”“长期记忆”和“持续动态状态”拆开。模型、记忆库与终端可以替换，驱动力、念头池、疲惫、睡眠、短期窗口和交接状态由独立状态机维护。
 
-## 核心数据流
+## 数据流
 
 ```text
-conversation event / heartbeat / feedback
-                    |
-                    v
-            deterministic state engine
-              /       |        \
-        thought pool fatigue   drives
-              \       |        /
-                 pickIntent
-                    |
-                    v
-         model / memory / notification
-              (all optional)
+终端 / Agent / 自建前端
+        |
+        | HTTP 或 Streamable HTTP MCP
+        v
+ OAuth / Bearer 认证
+        |
+        v
+  心潮动态状态机 ------> state.json
+    |    |    |
+    |    |    +------ 窗口短态 / 限时 handoff
+    |    +----------- 念头池 / 疲惫 / 驱动力
+    +---------------- 可选模型 / 记忆 MCP / 通知
+        |
+        +------------> transitions.jsonl（无正文审计）
 ```
+
+## 稳定窗口会话
+
+MCP 初始化时，服务端返回随机 `Mcp-Session-Id`。兼容客户端在后续请求中带回该 Header，心潮便可稳定识别同一窗口。
+
+- `session_id` 工具参数只作为显式覆盖值。
+- 不同 MCP 连接拥有不同窗口 ID。
+- 初始化、工具调用和协议版本协商保持无状态兼容。
+- 窗口短态会过期，不影响全局驱动力。
+
+## Context Envelope
+
+Context Envelope 负责传输短期状态，不负责保存或压缩稳定核心资料。
+
+默认可包含：
+
+- 当前驱动力、疲惫与运行状态；
+- 当前窗口短态；
+- 最多三条限时交接便签；
+- 近期梦境余韵；
+- 可选外部记忆 MCP 返回的近期连续性。
+
+同一窗口的 `session_start` 默认只交付一次，避免重复占用上下文。默认预算为 2200 tokens。
 
 ## 状态结算
 
 `settleState` 根据上次结算时间计算经过时长：
 
 1. 驱动力按各自速率增长，并受夜间倍率、清晨冻结与饱和区间限制。
-2. 念头池中的闪念按时间衰减；反复主题形成执念加权。
-3. 疲惫度随持续清醒时间增长，互动事件会改变部分状态。
-4. 空闲超过阈值后进入睡眠；重复结算保持幂等。
-
-## 意图选择
-
-`pickIntent` 先找出最高驱动力附近的候选集合，再用驱动力值与念头池执念加权进行选择。接口同时返回可解释的 `key`、`label` 和 `value`。
+2. 闪念随时间衰减，反复主题形成执念加权。
+3. 疲惫随清醒时长增长，空闲达到阈值后进入睡眠。
+4. 明确互动先结算经过时间，再应用服务端固定的有界语义效果。
+5. `event_id` 使网络重试保持幂等。
 
 ## 外部适配器
 
-- `ModelClient`：OpenAI-compatible Chat Completions API。
-- `MemoryClient`：Streamable HTTP MCP，工具名可配置。
+- `ModelClient`：任意 OpenAI-compatible Chat Completions API。
+- `OmbreClient`：可选的 Ombre-compatible Streamable HTTP Memory MCP。
 - `BarkClient`：可选手机通知。
+- `OAuthProvider`：远程 MCP 的 OAuth 2.1、PKCE 与动态客户端注册。
 
-适配器失败不会替代核心状态机；影子模式下所有外部读写和通知都关闭。
+所有适配器默认关闭。适配器失败不会替代核心状态机。
 
-## 持久化
+## 持久化与隐私
 
-`StateStore` 使用临时文件加原子替换写入 JSON。容器部署将 `/app/state` 映射到宿主机，升级镜像不会删除状态。
+- `StateStore` 通过临时文件和原子替换写入 JSON。
+- OAuth 客户端与 Token 摘要写入独立 `oauth.json`。
+- Transition Journal 保存结构化变化，不保存聊天正文。
+- Context audit 只保存 digest、交付时间和会话哈希。
+- handoff 只允许近期进度摘要，并设置长度与 TTL 上限。
 
 ## 安全边界
 
-- API 使用固定时间比较验证 Bearer Token。
+- Bearer Token 使用固定时间比较。
+- OAuth 要求 HTTPS、PKCE 和独立授权口令。
 - 请求体限制为 64 KiB。
-- Docker 默认只映射回环地址、只读根文件系统并移除 Linux capabilities。
-- 所有外部集成默认关闭，写入记忆与发送通知必须单独启用。
+- Docker 默认仅绑定回环地址、根文件系统只读并移除 capabilities。
+- 模型、记忆读写、MCP、OAuth 与通知均需分别显式启用。

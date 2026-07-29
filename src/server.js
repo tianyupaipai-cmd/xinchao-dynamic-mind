@@ -1,45 +1,81 @@
 import { createServer } from 'node:http';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { loadConfig } from './config.js';
-import { applyConversationEvent, applyDriveFeedback, applyMemoryHeartbeat, barkAllowed, breathDreamContext, contactIdleAllowed, daytimeEmergenceAllowed, dreamAllowed, newState, pickIntent, proactiveBarkAllowed, recordBark, recordDaytimeEmergence, recordDream, scheduleDaytimeEmergence, settleState, topDrives } from './engine.js';
+import { applyDriveFeedback, applyOmbreHeartbeat, barkAllowed, breathDreamContext, contactIdleAllowed, daytimeEmergenceAllowed, dreamAllowed, newState, pickIntent, proactiveBarkAllowed, recordBark, recordDaytimeEmergence, recordDream, scheduleDaytimeEmergence, settleAndApplyConversationEvent, settleState, topDrives } from './engine.js';
 import { selectUniqueBark } from './bark-dedupe.js';
 import { StateStore } from './state-store.js';
 import { ModelClient } from './model-client.js';
-import { MemoryClient } from './memory-client.js';
+import { OmbreClient } from './ombre-client.js';
 import { BarkClient } from './bark-client.js';
-import { readMemoryHeartbeat } from './heartbeat-store.js';
+import { readOmbreHeartbeat } from './heartbeat-store.js';
+import { buildContextEnvelope, contextDeliveryState, recordContextDelivery } from './context-envelope.js';
+import { TransitionJournal } from './transition-journal.js';
+import { handleMcpMessage } from './mcp-protocol.js';
+import { OAuthProvider } from './oauth-provider.js';
+import { recordHandoffNote } from './handoff-notes.js';
 
 const config = loadConfig();
 if (!config.serviceToken) throw new Error('SERVICE_TOKEN is required');
 
 const store = new StateStore(config.statePath, () => newState());
 const model = new ModelClient(config.model);
-const memory = new MemoryClient(config.memory);
+const ombre = new OmbreClient(config.ombre);
 const bark = new BarkClient(config.bark);
+const journal = new TransitionJournal(config.journalPath);
+const oauth = new OAuthProvider(config.oauth, (event, fields = {}) => log(event, fields));
+await oauth.init();
 let cyclePromise = null;
 
 function log(event, fields = {}) {
   console.log(JSON.stringify({ at: new Date().toISOString(), event, ...fields }));
 }
 
-async function synchronizeMemoryHeartbeat() {
+async function updateState(meta, mutate) {
+  let before;
+  const after = await store.update((current) => {
+    before = structuredClone(current);
+    return mutate(current);
+  });
+  try {
+    await journal.recordTransition({
+      before,
+      after,
+      type: meta.type,
+      source: meta.source,
+      sessionId: meta.sessionId,
+      eventId: meta.eventId,
+      details: meta.details,
+      force: meta.force,
+      at: meta.at,
+    });
+  } catch (error) {
+    log('transition_journal_failed', { type: meta.type, message: error.message });
+  }
+  return after;
+}
+
+async function synchronizeOmbreHeartbeat() {
   let recordedAt;
   try {
-    recordedAt = await readMemoryHeartbeat(config.heartbeat.filePath);
+    recordedAt = await readOmbreHeartbeat(config.heartbeat.filePath);
   } catch (error) {
-    log('memory_heartbeat_read_failed', { message: error.message });
+    log('ombre_heartbeat_read_failed', { message: error.message });
     return null;
   }
   if (!recordedAt) return null;
 
   let observed = false;
-  const state = await store.update((current) => {
+  const state = await updateState({
+    type: 'ombre_heartbeat',
+    source: 'ombre-file',
+    at: new Date(recordedAt),
+  }, (current) => {
     const previous = Date.parse(current.lastHeartbeatAt ?? '');
     if (Number.isFinite(previous) && previous >= recordedAt.getTime()) return current;
     observed = true;
-    return applyMemoryHeartbeat(current, recordedAt).state;
+    return applyOmbreHeartbeat(current, recordedAt).state;
   });
-  if (observed) log('memory_heartbeat_observed', { revision: state.revision });
+  if (observed) log('ombre_heartbeat_observed', { revision: state.revision });
   return state;
 }
 
@@ -47,9 +83,13 @@ async function runCycle() {
   if (cyclePromise) return cyclePromise;
   cyclePromise = (async () => {
     const now = new Date();
-    await synchronizeMemoryHeartbeat();
+    await synchronizeOmbreHeartbeat();
     let settled;
-    await store.update((state) => {
+    await updateState({
+      type: 'settle',
+      source: 'timer',
+      at: now,
+    }, (state) => {
       settled = settleState(state, now, config.sleepAfterMinutes, config.settle);
       return settled.state;
     });
@@ -65,9 +105,9 @@ async function runCycle() {
 
     if (dreamAllowed(state, now, config.dreamMinIntervalHours, config.dreamMaxPerDay)) {
       let material = '';
-      if (!config.shadowMode && config.memory.readEnabled) {
-        try { material = await memory.recentMaterial(); }
-        catch (error) { log('memory_read_failed', { message: error.message }); }
+      if (!config.shadowMode && config.ombre.readEnabled) {
+        try { material = await ombre.recentMaterial(); }
+        catch (error) { log('ombre_read_failed', { message: error.message }); }
       }
 
       let generated;
@@ -82,18 +122,23 @@ async function runCycle() {
         }
       }
 
-      const dream = { id: randomUUID(), createdAt: now.toISOString(), ...generated, memoryRecordId: null };
-      if (!config.shadowMode && config.memory.writeEnabled) {
-        try { dream.memoryRecordId = await memory.storeDream(dream); }
-        catch (error) { log('memory_write_failed', { message: error.message }); }
+      const dream = { id: randomUUID(), createdAt: now.toISOString(), ...generated, ombreBucketId: null };
+      if (!config.shadowMode && config.ombre.writeEnabled) {
+        try { dream.ombreBucketId = await ombre.storeDream(dream); }
+        catch (error) { log('ombre_write_failed', { message: error.message }); }
       }
 
-      state = await store.update((latest) => {
+      state = await updateState({
+        type: 'dream_recorded',
+        source: config.shadowMode ? 'rule-seed' : 'model',
+        details: { dreamCreated: true },
+        at: now,
+      }, (latest) => {
         if (!dreamAllowed(latest, now, config.dreamMinIntervalHours, config.dreamMaxPerDay)) return latest;
         return recordDream(latest, dream);
       });
       dreamCreated = true;
-      log('dream_settled', { source: dream.source, shadow: config.shadowMode, usedMemory: Boolean(material), revision: state.revision });
+      log('dream_settled', { source: dream.source, shadow: config.shadowMode, usedBreath: Boolean(material), revision: state.revision });
 
       if (!config.shadowMode && config.bark.enabled && dreamContactIsIdle && barkAllowed(state, now, config.bark.minIntervalHours, config.bark.maxPerDay, 'dream')) {
         try {
@@ -118,7 +163,12 @@ async function runCycle() {
           if (selected.message) {
             const result = await bark.send(selected.message);
             if (result.sent) {
-              state = await store.update((latest) => recordBark(latest, now, { kind: 'dream', message: selected.message }));
+              state = await updateState({
+                type: 'bark_sent',
+                source: 'bark',
+                details: { barkSent: true, kind: 'dream' },
+                at: now,
+              }, (latest) => recordBark(latest, now, { kind: 'dream', message: selected.message }));
               barkSent = true;
               log('bark_sent', { kind: 'dream', revision: state.revision });
             }
@@ -156,7 +206,12 @@ async function runCycle() {
         try {
           const result = await bark.send(selected.message);
           if (result.sent) {
-            state = await store.update((latest) => recordBark(latest, now, { kind: 'autonomous_thought', message: selected.message }));
+            state = await updateState({
+              type: 'bark_sent',
+              source: 'bark',
+              details: { barkSent: true, kind: 'autonomous_thought' },
+              at: now,
+            }, (latest) => recordBark(latest, now, { kind: 'autonomous_thought', message: selected.message }));
             barkSent = true;
             log('bark_sent', { kind: 'autonomous_thought', source: selected.candidate?.source, revision: state.revision });
           }
@@ -165,12 +220,16 @@ async function runCycle() {
     }
 
     if (!state.nextDaytimeEmergenceAt && config.daytime.enabled) {
-      state = await store.update((latest) => scheduleDaytimeEmergence(latest, now, config.daytime.minIntervalHours, config.daytime.maxIntervalHours));
+      state = await updateState({
+        type: 'daytime_emergence_scheduled',
+        source: 'timer',
+        at: now,
+      }, (latest) => scheduleDaytimeEmergence(latest, now, config.daytime.minIntervalHours, config.daytime.maxIntervalHours));
       log('daytime_emergence_scheduled', { nextAt: state.nextDaytimeEmergenceAt, revision: state.revision });
-    } else if (!config.shadowMode && config.daytime.enabled && config.memory.readEnabled && config.bark.enabled && daytimeEmergenceAllowed(state, now, config.daytime)) {
+    } else if (!config.shadowMode && config.daytime.enabled && config.ombre.readEnabled && config.bark.enabled && daytimeEmergenceAllowed(state, now, config.daytime)) {
       let selected = { message: '', candidate: { source: 'none' }, reason: 'empty', attempts: 1 };
       try {
-        const material = await memory.daytimeMaterial();
+        const material = await ombre.daytimeMaterial();
         if (material.trim()) {
           selected = await selectUniqueBark({
             state,
@@ -188,7 +247,12 @@ async function runCycle() {
         try {
           const result = await bark.send(selected.message);
           if (result.sent) {
-            state = await store.update((latest) => recordDaytimeEmergence(latest, selected.message, now, config.daytime.timeZone));
+            state = await updateState({
+              type: 'daytime_emergence_sent',
+              source: 'bark',
+              details: { daytimeSent: true },
+              at: now,
+            }, (latest) => recordDaytimeEmergence(latest, selected.message, now, config.daytime.timeZone));
             daytimeSent = true;
             log('bark_sent', { kind: 'daytime_emergence', source: selected.candidate?.source, revision: state.revision });
           }
@@ -198,7 +262,11 @@ async function runCycle() {
       } else {
         log('daytime_emergence_skipped', { reason: selected.reason === 'duplicate' ? 'duplicate' : 'no_pushworthy_material' });
       }
-      state = await store.update((latest) => scheduleDaytimeEmergence(latest, now, config.daytime.minIntervalHours, config.daytime.maxIntervalHours));
+      state = await updateState({
+        type: 'daytime_emergence_scheduled',
+        source: 'timer',
+        at: now,
+      }, (latest) => scheduleDaytimeEmergence(latest, now, config.daytime.minIntervalHours, config.daytime.maxIntervalHours));
       log('daytime_emergence_scheduled', { nextAt: state.nextDaytimeEmergenceAt, revision: state.revision });
     }
     return { state, dreamCreated, barkSent, daytimeSent };
@@ -206,11 +274,51 @@ async function runCycle() {
   return cyclePromise;
 }
 
+function safeEqual(supplied, expected) {
+  const left = Buffer.from(supplied);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function auditEventFingerprint(value) {
+  const eventId = String(value ?? '').trim();
+  return eventId
+    ? createHash('sha256').update(eventId, 'utf8').digest('hex').slice(0, 24)
+    : '';
+}
+
 function authorized(request) {
   const supplied = request.headers.authorization?.replace(/^Bearer\s+/i, '') ?? '';
-  const left = Buffer.from(supplied);
-  const right = Buffer.from(config.serviceToken);
-  return left.length === right.length && timingSafeEqual(left, right);
+  return safeEqual(supplied, config.serviceToken);
+}
+
+function mcpPath(url) {
+  return url.pathname === '/mcp' || url.pathname.startsWith('/mcp/');
+}
+
+function transportSessionId(request, initialize = false) {
+  const supplied = String(request.headers['mcp-session-id'] ?? '').trim();
+  if (!initialize && /^[A-Za-z0-9._~-]{1,120}$/.test(supplied)) return supplied;
+  return `mcp-${randomUUID()}`;
+}
+
+function negotiatedProtocolVersion(request, payload, result) {
+  const supported = new Set(['2025-03-26', '2025-06-18']);
+  const values = [
+    result?.body?.result?.protocolVersion,
+    request.headers['mcp-protocol-version'],
+    payload?.params?.protocolVersion,
+  ];
+  return values.find((value) => supported.has(String(value))) ?? '2025-06-18';
+}
+
+function mcpAuthorized(request, url) {
+  if (authorized(request)) return true;
+  const bearer = request.headers.authorization?.replace(/^Bearer\s+/i, '') ?? '';
+  if (oauth.validateAccessToken(bearer)) return true;
+  if (!config.mcp.pathToken || !url.pathname.startsWith('/mcp/')) return false;
+  const supplied = decodeURIComponent(url.pathname.slice('/mcp/'.length));
+  return safeEqual(supplied, config.mcp.pathToken);
 }
 
 async function body(request) {
@@ -227,11 +335,214 @@ function send(response, status, value) {
   response.end(JSON.stringify(value));
 }
 
+function sendMcp(response, status, value, extraHeaders = {}) {
+  const headers = {
+    'Cache-Control': 'no-store',
+    ...extraHeaders,
+  };
+  if (value == null) {
+    response.writeHead(status, headers);
+    return response.end();
+  }
+  response.writeHead(status, { ...headers, 'Content-Type': 'application/json; charset=utf-8' });
+  return response.end(JSON.stringify(value));
+}
+
+async function createContextEnvelope({
+  sessionId,
+  mode = 'session_start',
+  maxTokens = config.context.defaultMaxTokens,
+  force = false,
+  now = new Date(),
+}) {
+  let state = await store.read();
+  const delivery = contextDeliveryState(state, sessionId, mode, now, config.context.handoffOnceHours);
+  let ombreText = '';
+  let ombreWarning = '';
+  if (
+    mode === 'session_start'
+    && (!delivery.alreadyDelivered || force)
+    && config.context.ombreEnabled
+    && config.ombre.readEnabled
+  ) {
+    try {
+      ombreText = await ombre.recentContinuityMaterial(config.context.ombreMaxTokens);
+    } catch (error) {
+      ombreWarning = 'ombre_unavailable';
+      log('context_ombre_read_failed', { message: error.message });
+    }
+  }
+  const envelope = buildContextEnvelope({
+    state,
+    sessionId,
+    mode,
+    ombreText,
+    maxTokens,
+    ttlMinutes: config.context.ttlMinutes,
+    now,
+    alreadyDelivered: delivery.alreadyDelivered,
+    force,
+  });
+  if (envelope.delivered) {
+    state = await updateState({
+      type: 'context_delivery',
+      source: 'context-adapter',
+      sessionId,
+      details: {
+        delivered: true,
+        force,
+        mode,
+        ombreIncluded: Boolean(ombreText),
+        estimatedTokens: envelope.estimatedTokens,
+        sectionCount: envelope.sections.length,
+      },
+      at: now,
+    }, (current) => recordContextDelivery(current, {
+      sessionId,
+      mode,
+      digest: envelope.digest,
+      deliveredAt: now,
+    }));
+  }
+  try {
+    await journal.recordContext({
+      mode,
+      sessionId,
+      digest: envelope.digest,
+      estimatedTokens: envelope.estimatedTokens,
+      sectionCount: envelope.sections.length,
+      delivered: envelope.delivered,
+      alreadyDelivered: envelope.alreadyDelivered,
+      ombreIncluded: Boolean(ombreText),
+      at: now,
+    });
+  } catch (error) {
+    log('context_audit_failed', { message: error.message });
+  }
+  return ombreWarning ? { ...envelope, warnings: [ombreWarning] } : envelope;
+}
+
+async function recordConversationEvent(event, source = 'api', now = new Date()) {
+  let applied;
+  const auditDetails = {};
+  const state = await updateState({
+    type: source === 'heartbeat' ? 'conversation_heartbeat' : 'conversation_event',
+    source: source === 'mcp' ? 'mcp' : 'api',
+    sessionId: event.sessionId ?? event.session_id,
+    eventId: auditEventFingerprint(event.eventId ?? event.event_id),
+    details: auditDetails,
+    at: now,
+  }, (current) => {
+    applied = settleAndApplyConversationEvent(current, event, now, {
+      sleepAfterMinutes: config.sleepAfterMinutes,
+      settle: config.settle,
+      interaction: config.interaction,
+    });
+    Object.assign(auditDetails, {
+      changed: applied.changed,
+      duplicate: applied.duplicate,
+      interactionApplied: applied.interaction?.applied,
+      reasonCode: applied.interaction?.reasonCode,
+      settledHours: Number(applied.settled.elapsedHours.toFixed(4)),
+    });
+    return applied.state;
+  });
+  return {
+    revision: state.revision,
+    consciousness: state.consciousness,
+    pendingAwareness: state.pendingAwareness,
+    sessionId: applied.sessionId || null,
+    sessionCreated: applied.sessionCreated,
+    duplicate: applied.duplicate,
+    interaction: applied.interaction,
+    settledHours: Number(applied.settled.elapsedHours.toFixed(4)),
+  };
+}
+
+async function saveHandoffNote(note, source = 'mcp', now = new Date()) {
+  let applied;
+  const state = await updateState({
+    type: 'handoff_note',
+    source,
+    sessionId: note.sessionId,
+    eventId: auditEventFingerprint(note.eventId),
+    details: {
+      noteLength: String(note.note ?? '').length,
+      ttlHours: note.ttlHours,
+    },
+    at: now,
+  }, (current) => {
+    applied = recordHandoffNote(current, { ...note, now });
+    return applied.state;
+  });
+  return {
+    revision: state.revision,
+    duplicate: applied.duplicate,
+    noteLength: applied.noteLength,
+  };
+}
+
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, 'http://localhost');
     if (request.method === 'GET' && url.pathname === '/health') {
-      return send(response, 200, { ok: true, mode: config.shadowMode ? 'shadow' : 'active', version: '2.0.0' });
+      return send(response, 200, {
+        ok: true,
+        system: 'xinchao-dynamic-mind',
+        mode: config.shadowMode ? 'shadow' : 'active',
+        version: '2.3.1',
+      });
+    }
+    if (await oauth.handle(request, response, url)) return;
+    if (config.mcp.enabled && mcpPath(url)) {
+      if (!mcpAuthorized(request, url)) {
+        if (oauth.enabled) response.setHeader('WWW-Authenticate', oauth.wwwAuthenticate());
+        return sendMcp(response, 401, { error: 'unauthorized' });
+      }
+      if (request.method === 'DELETE') {
+        return sendMcp(response, 204, null, {
+          'Mcp-Session-Id': transportSessionId(request),
+          'MCP-Protocol-Version': '2025-06-18',
+        });
+      }
+      if (request.method !== 'POST') {
+        response.setHeader('Allow', 'POST, DELETE');
+        return sendMcp(response, 405, { error: 'method not allowed' });
+      }
+      const payload = await body(request);
+      const sessionId = transportSessionId(request, payload?.method === 'initialize');
+      const result = await handleMcpMessage(payload, {
+        defaultSessionId: sessionId,
+        context: async (args) => {
+          if (!config.context.enabled) throw new Error('心潮 Context Envelope 当前未启用');
+          return createContextEnvelope(args);
+        },
+        event: async (event) => {
+          const result = await recordConversationEvent(event, 'mcp');
+          return {
+            revision: result.revision,
+            consciousness: result.consciousness,
+            sessionId: result.sessionId,
+            sessionCreated: result.sessionCreated,
+            duplicate: result.duplicate,
+            interaction: result.interaction,
+            settledHours: result.settledHours,
+          };
+        },
+        handoffNote: async (note) => saveHandoffNote(note, 'mcp'),
+      });
+      if (payload?.method === 'initialize' || payload?.method === 'tools/call') {
+        log('mcp_request', {
+          method: payload.method,
+          tool: payload?.params?.name ? String(payload.params.name).slice(0, 80) : undefined,
+          session: auditEventFingerprint(sessionId),
+          status: result.status,
+        });
+      }
+      return sendMcp(response, result.status, result.body, {
+        'Mcp-Session-Id': sessionId,
+        'MCP-Protocol-Version': negotiatedProtocolVersion(request, payload, result),
+      });
     }
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
 
@@ -245,6 +556,22 @@ const server = createServer(async (request, response) => {
         generatedAt: new Date().toISOString(),
       });
     }
+    if (request.method === 'GET' && url.pathname === '/v1/context') {
+      if (!config.context.enabled) return send(response, 503, { error: 'context envelope disabled' });
+      const now = new Date();
+      const sessionId = String(url.searchParams.get('session_id') ?? 'default').trim().slice(0, 120) || 'default';
+      const requestedMode = String(url.searchParams.get('mode') ?? 'session_start').trim().toLowerCase();
+      const mode = ['session_start', 'turn', 'inspect'].includes(requestedMode) ? requestedMode : 'session_start';
+      const force = ['1', 'true', 'yes', 'on'].includes(String(url.searchParams.get('force') ?? '').toLowerCase());
+      const maxTokens = Number(url.searchParams.get('max_tokens') ?? config.context.defaultMaxTokens);
+      return send(response, 200, await createContextEnvelope({
+        sessionId,
+        mode,
+        maxTokens,
+        force,
+        now,
+      }));
+    }
     if (request.method === 'GET' && url.pathname === '/v1/intent') {
       const state = await store.read();
       const intent = pickIntent(state);
@@ -256,13 +583,18 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === 'POST' && (url.pathname === '/v1/conversation-event' || url.pathname === '/v1/heartbeat')) {
       const event = await body(request);
-      const now = new Date();
-      const state = await store.update((current) => applyConversationEvent(current, event, now).state);
-      return send(response, 200, { revision: state.revision, consciousness: state.consciousness, pendingAwareness: state.pendingAwareness });
+      const source = url.pathname === '/v1/heartbeat' ? 'heartbeat' : 'api';
+      return send(response, 200, await recordConversationEvent(event, source));
     }
     if (request.method === 'POST' && url.pathname === '/v1/drive-feedback') {
       const payload = await body(request);
-      const state = await store.update((current) => applyDriveFeedback(current, payload.driveDeltas ?? {}, new Date()));
+      const now = new Date();
+      const state = await updateState({
+        type: 'drive_feedback',
+        source: 'api',
+        eventId: payload.eventId ?? payload.event_id,
+        at: now,
+      }, (current) => applyDriveFeedback(current, payload.driveDeltas ?? {}, now));
       return send(response, 200, { revision: state.revision, topDrives: topDrives(state) });
     }
     return send(response, 404, { error: 'not found' });

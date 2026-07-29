@@ -11,7 +11,11 @@ Please report suspected vulnerabilities privately through GitHub Security Adviso
 ## Deployment baseline
 
 - Replace the example `SERVICE_TOKEN` before starting the service.
-- Keep `.env`, `state/` and `memory-data/` out of version control.
+- Keep `.env`, `state/`, OAuth state, transition journals and `memory-data/` out of version control.
 - Bind the service to loopback unless a trusted reverse proxy provides TLS and access control.
 - Leave model, memory and notification integrations disabled until each one has been tested independently.
 - Treat `/v1/settle`, `/v1/conversation-event`, `/v1/heartbeat` and `/v1/drive-feedback` as state-changing endpoints.
+- Use independent values for `SERVICE_TOKEN`, `MCP_PATH_TOKEN` and `OAUTH_APPROVAL_TOKEN`.
+- Never expose an MCP path token in screenshots, documentation, analytics or public URLs.
+- Remote OAuth deployments must use HTTPS. Do not weaken PKCE or redirect URI validation.
+- Do not put chat transcripts, credentials or stable identity/core instructions in handoff notes.

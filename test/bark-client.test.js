@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BarkClient } from '../src/bark-client.js';
 
-test('Bark preserves configured identity settings', async () => {
+test('Bark preserves the configured agent identity settings', async () => {
   const originalFetch = globalThis.fetch;
   let request;
   globalThis.fetch = async (url, options) => {
