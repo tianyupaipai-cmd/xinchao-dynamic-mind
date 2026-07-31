@@ -1,4 +1,4 @@
-# 心潮动态心智系统 2.3.1
+# 心潮动态心智系统 2.3.2
 
 ![心潮动态心智系统](docs/cover.png)
 
@@ -6,8 +6,11 @@
 
 > 心潮模拟可解释的动态状态，不宣称产生意识、情感或生命。核心状态机可离线运行；模型、长期记忆、OAuth 和通知均为可选适配器。
 
-## 2.3.1 更新重点
+## 2.3.2 更新重点
 
+- **HTTP 便签闭环**：补齐 `POST /v1/handoff-note`，HTTP 前端与 MCP 客户端现在使用同一套有界、幂等的短期交接。
+- **在场时间修复**：heartbeat 和真实 `xinchao_event` 都会刷新 `lastHeartbeatAt`，避免在线时被自主推送误判为长期离线。
+- **隐私版窗口 hook**：提供只发送会话 ID 与随机事件 ID 的 Claude Code 脚本，不上传提示词正文。
 - **稳定 MCP 窗口**：初始化时由服务端签发 `Mcp-Session-Id`，不再依赖模型临时编写窗口 ID。
 - **近期连续性**：Context Envelope 只携带动态短态、近期交接和可选的长期记忆召回，不替代客户端自己的核心指令或人物基岩。
 - **短期交接便签**：`xinchao_handoff_note` 最多 1200 字、默认 72 小时过期，不保存整段聊天原文。
@@ -116,9 +119,47 @@ Authorization: Bearer <SERVICE_TOKEN>
 | `GET` | `/v1/context` | 获取 Context Envelope |
 | `POST` | `/v1/settle` | 执行状态结算 |
 | `POST` | `/v1/conversation-event` | 写入一次明确互动事件 |
+| `POST` | `/v1/heartbeat` | 只刷新在场时间，不上传聊天正文 |
 | `POST` | `/v1/handoff-note` | 保存短期交接摘要 |
 | `POST` | `/v1/drive-feedback` | 管理端受控反馈接口 |
 | `POST` | `/mcp` | Streamable HTTP MCP |
+
+## 心跳接入档位
+
+heartbeat 与 `breath` 的定位不同：`breath` 是可能返回上下文的按需记忆检索；heartbeat 只发送 `session_id` 和不透明的 `event_id`，不上传提示词或回复、不注入模型上下文，因此本身不消耗上下文 token。档位差异只影响实时性和网络请求量：
+
+- **实时档**：本地 Claude Code、Max 或具备生命周期 hook 的前端，可在每次提交消息时上报。
+- **均衡档**：希望降低请求量时设置 120–300 秒最小间隔；这不是为了节省上下文。
+- **兼容档**：Claude.ai 普通连接器、手机或无 hook 前端，在会话开始调用 `xinchao_context`，明确互动后调用 `xinchao_event`，服务端应配置更宽的离线阈值。
+
+Claude Code 可使用仓库中的 [`scripts/xinchao-heartbeat-hook.sh`](scripts/xinchao-heartbeat-hook.sh)。脚本读取 hook 输入后只保留 `session_id`，主动丢弃 `prompt`。不要直接把 `UserPromptSubmit` 配成指向心潮的原始 HTTP hook，否则客户端可能把包含提示词的完整 hook JSON 发送出去。
+
+本机私有 `.claude/settings.local.json` 示例：
+
+```json
+{
+  "env": {
+    "XINCHAO_SERVICE_TOKEN_FILE": "/absolute/private/path/xinchao.service-token",
+    "XINCHAO_HEARTBEAT_URL": "https://xinchao.example.com/v1/heartbeat",
+    "XINCHAO_HEARTBEAT_MIN_INTERVAL_SECONDS": "0"
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/xinchao-heartbeat-hook.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+token 文件应放在仓库外并设为 `0600`；私有设置不要提交。均衡档将最小间隔改成 `120` 或 `300`。
 
 ## 长期记忆边界
 

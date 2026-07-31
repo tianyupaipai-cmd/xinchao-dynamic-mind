@@ -19,6 +19,7 @@ test('only an explicit conversation event wakes the state', () => {
   assert.equal(settled.consciousness, 'sleeping');
   const awake = applyConversationEvent(settled, {}, new Date('2026-07-16T03:01:00Z')).state;
   assert.equal(awake.consciousness, 'awake');
+  assert.equal(awake.lastHeartbeatAt, '2026-07-16T03:01:00.000Z');
   assert.match(awake.pendingAwareness.note, /调用记忆服务本身不代表醒来/);
 });
 

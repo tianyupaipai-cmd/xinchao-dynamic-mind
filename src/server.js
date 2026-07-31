@@ -482,6 +482,15 @@ async function saveHandoffNote(note, source = 'mcp', now = new Date()) {
   };
 }
 
+function handoffNoteFromHttp(payload = {}) {
+  return {
+    sessionId: payload.sessionId ?? payload.session_id,
+    eventId: payload.eventId ?? payload.event_id,
+    note: payload.note,
+    ttlHours: payload.ttlHours ?? payload.ttl_hours,
+  };
+}
+
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, 'http://localhost');
@@ -490,7 +499,7 @@ const server = createServer(async (request, response) => {
         ok: true,
         system: 'xinchao-dynamic-mind',
         mode: config.shadowMode ? 'shadow' : 'active',
-        version: '2.3.1',
+        version: '2.3.2',
       });
     }
     if (await oauth.handle(request, response, url)) return;
@@ -585,6 +594,10 @@ const server = createServer(async (request, response) => {
       const event = await body(request);
       const source = url.pathname === '/v1/heartbeat' ? 'heartbeat' : 'api';
       return send(response, 200, await recordConversationEvent(event, source));
+    }
+    if (request.method === 'POST' && url.pathname === '/v1/handoff-note') {
+      const payload = await body(request);
+      return send(response, 200, await saveHandoffNote(handoffNoteFromHttp(payload), 'api'));
     }
     if (request.method === 'POST' && url.pathname === '/v1/drive-feedback') {
       const payload = await body(request);
