@@ -2,6 +2,25 @@
 
 本项目遵循语义化版本。除非特别说明，所有外部模型、长期记忆、OAuth 与通知能力均保持默认关闭。
 
+## 2.3.2 — 2026-07-31
+
+### 修复
+
+- 补齐 `POST /v1/handoff-note`，HTTP 客户端现在可以保存并在 Context Envelope 中读回短期交接便签。
+- HTTP 便签接受 `snake_case` 与 `camelCase` 字段，继续执行 1200 字上限、1–168 小时 TTL 和 `event_id` 幂等。
+- 修复 `/v1/heartbeat` 返回成功却没有刷新 `lastHeartbeatAt` 的问题。
+- 所有真实 `xinchao_event` 同时刷新在场时间，避免正在互动时被自主推送误判为长期离线。
+
+### 接入与隐私
+
+- 新增隐私优先的 Claude Code `UserPromptSubmit` hook，只发送会话 ID 与随机事件 ID。
+- 文档增加实时、均衡、兼容三种心跳档位，并明确 heartbeat 不等于 `breath`、不占用模型上下文。
+- 不建议直接把原始 `UserPromptSubmit` HTTP hook 指向心潮，以免完整 hook 请求体携带提示词正文。
+
+### 测试
+
+- 新增 HTTP 端到端回归测试，覆盖鉴权、heartbeat 状态更新、handoff 幂等与 Context Envelope 回读。
+
 ## 2.3.1 — 2026-07-29
 
 ### 新增

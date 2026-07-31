@@ -399,6 +399,10 @@ export function applyConversationEvent(input, event = {}, now = new Date(), opti
   const wasSleeping = state.consciousness === 'sleeping';
   state.consciousness = 'awake';
   state.lastConversationAt = iso(now);
+  // Any real conversation event is stronger evidence of presence than a
+  // content-free heartbeat. Keep the autonomous-contact idle gate aligned
+  // with both HTTP hooks and MCP interaction events.
+  state.lastHeartbeatAt = iso(now);
   state.lastSettledAt = iso(now);
   state.sleepStartedAt = null;
   state.thoughtPool ??= newThoughtPool();
