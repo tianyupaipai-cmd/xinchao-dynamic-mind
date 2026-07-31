@@ -107,3 +107,23 @@ export function loadConfig() {
     }
   };
 }
+
+export function validateConfig(config) {
+  const externalMemoryEnabled = Boolean(
+    config.ombre.readEnabled
+    || config.ombre.writeEnabled
+    || config.context.ombreEnabled
+  );
+  if (!externalMemoryEnabled) return config;
+  if (!String(config.ombre.url || '').trim()) {
+    throw new Error(
+      'OMBRE_MCP_URL is required when external memory integration is enabled'
+    );
+  }
+  if (!String(config.ombre.token || '').trim()) {
+    throw new Error(
+      'OMBRE_MCP_TOKEN is required when external memory integration is enabled'
+    );
+  }
+  return config;
+}

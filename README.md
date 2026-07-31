@@ -173,6 +173,11 @@ OMBRE_WRITE_ENABLED=false
 CONTEXT_OMBRE_ENABLED=false
 ```
 
+- 只要开启 `OMBRE_READ_ENABLED`、`OMBRE_WRITE_ENABLED` 或
+  `CONTEXT_OMBRE_ENABLED`，`OMBRE_MCP_URL` 与 `OMBRE_MCP_TOKEN` 就都必须填写；
+  缺少任一项时服务会拒绝启动，避免在后台持续产生 401。
+- `OMBRE_MCP_TOKEN` 是外部记忆 MCP 接受的服务端 Bearer 凭据，不是 Dashboard
+  登录密码。它只能放在心潮服务端 `.env`，不能写入前端、URL 或 Git 仓库。
 - 心潮只请求近期连续性，不用短 handoff 替代客户端的稳定核心资料。
 - 自动梦境写入会明确标记为自动来源。
 - 技术日志、密钥、OAuth 状态和聊天原文不应进入长期人物记忆。
