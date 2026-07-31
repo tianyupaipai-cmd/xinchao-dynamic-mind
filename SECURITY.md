@@ -16,6 +16,9 @@ Please report suspected vulnerabilities privately through GitHub Security Adviso
 - Leave model, memory and notification integrations disabled until each one has been tested independently.
 - Treat `/v1/settle`, `/v1/conversation-event`, `/v1/heartbeat` and `/v1/drive-feedback` as state-changing endpoints.
 - Use independent values for `SERVICE_TOKEN`, `MCP_PATH_TOKEN` and `OAUTH_APPROVAL_TOKEN`.
+- Keep external-memory credentials such as `OMBRE_MCP_TOKEN` in the server-side
+  environment only. Never place them in a browser bundle, URL or repository,
+  and never substitute an external service's Dashboard password.
 - Never expose an MCP path token in screenshots, documentation, analytics or public URLs.
 - Remote OAuth deployments must use HTTPS. Do not weaken PKCE or redirect URI validation.
 - Do not put chat transcripts, credentials or stable identity/core instructions in handoff notes.
