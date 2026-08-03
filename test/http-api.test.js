@@ -40,7 +40,7 @@ async function waitForHealth(baseUrl, child, output) {
 test('POST /v1/handoff-note stores a bounded idempotent note for HTTP clients', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'xinchao-http-api-'));
   const port = await freePort();
-  const token = 'http-api-test-token';
+  const token = 'http-api-test-token-0123456789abcdef';
   const dashboardToken = 'dashboard-http-test-token-32-characters';
   const bridgeToken = 'bridge-http-test-token-32-characters';
   const baseUrl = `http://127.0.0.1:${port}`;

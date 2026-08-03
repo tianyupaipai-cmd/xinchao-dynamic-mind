@@ -11,6 +11,12 @@ Please report suspected vulnerabilities privately through GitHub Security Adviso
 ## Deployment baseline
 
 - Replace the example `SERVICE_TOKEN` before starting the service.
+  The server refuses to start with the placeholder value or any token shorter
+  than 32 characters.
+- `MCP_PATH_TOKEN` travels inside the URL path. URLs are commonly recorded by
+  reverse proxies, CDN logs and browser history — treat this mode as a
+  compatibility fallback for clients that cannot send headers, prefer the
+  `Authorization` header, and rotate the path token more aggressively.
 - Keep `.env`, `state/`, OAuth state, transition journals and `memory-data/` out of version control.
 - Bind the service to loopback unless a trusted reverse proxy provides TLS and access control.
 - Leave model, memory and notification integrations disabled until each one has been tested independently.
