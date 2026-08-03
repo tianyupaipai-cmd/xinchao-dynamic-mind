@@ -36,8 +36,11 @@ test('dashboard snapshot is stable and private by default', () => {
     id: 'dream-private',
     createdAt: '2026-08-03T07:30:00.000Z',
     source: 'model',
+    dream: '不能泄露的梦境原文',
     summary: '不能泄露的梦境摘要',
     residue: '不能泄露的梦境余韵',
+    awareness: '不能泄露的醒后意识',
+    lucidity: 0.72,
   });
   const snapshot = buildDashboardSnapshot(state, config(), now);
   const raw = JSON.stringify(snapshot);
@@ -49,6 +52,9 @@ test('dashboard snapshot is stable and private by default', () => {
   assert.equal(snapshot.thoughts.flashCount, 1);
   assert.equal(snapshot.thoughts.signals[0].intensity, 0.91);
   assert.equal(snapshot.dreams[0].hasResidue, true);
+  assert.equal(snapshot.dreams[0].hasDream, true);
+  assert.equal(snapshot.dreams[0].lucidity, 0.72);
+  assert.equal(snapshot.dreams[0].dream, undefined);
   assert.equal(snapshot.dreams[0].residue, undefined);
   assert.doesNotMatch(raw, /不能泄露/);
 });
@@ -59,14 +65,18 @@ test('private dream text is an explicit bounded opt-in', () => {
     id: 'dream-visible',
     createdAt: new Date().toISOString(),
     source: 'model',
-    summary: '一段梦',
+    dream: '我在云层里看见一扇门',
+    awareness: '醒来仍记得门上的光',
     residue: '留下的余韵',
+    lucidity: 0.81,
   });
   const snapshot = buildDashboardSnapshot(state, config({
     dashboard: { includePrivateText: true },
   }));
-  assert.equal(snapshot.dreams[0].summary, '一段梦');
+  assert.equal(snapshot.dreams[0].dream, '我在云层里看见一扇门');
+  assert.equal(snapshot.dreams[0].summary, '醒来仍记得门上的光');
   assert.equal(snapshot.dreams[0].residue, '留下的余韵');
+  assert.equal(snapshot.dreams[0].lucidity, 0.81);
 });
 
 test('connection manifest supports different clients without returning secrets', () => {

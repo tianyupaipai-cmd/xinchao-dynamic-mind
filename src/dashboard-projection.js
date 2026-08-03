@@ -51,17 +51,29 @@ function projectedThoughts(state) {
 
 function projectedDreams(state, includePrivateText, limit = 12) {
   const dreams = Array.isArray(state?.recentDreams) ? state.recentDreams : [];
-  return dreams.slice(-Math.max(1, Math.min(30, Number(limit) || 12))).reverse().map((dream) => ({
-    id: compact(dream?.id, 120) || null,
-    createdAt: validDate(dream?.createdAt),
-    source: compact(dream?.source, 60) || 'unknown',
-    hasResidue: Boolean(compact(dream?.residue)),
-    hasSummary: Boolean(compact(dream?.summary)),
-    ...(includePrivateText ? {
-      summary: compact(dream?.summary, 360) || null,
-      residue: compact(dream?.residue, 360) || null,
-    } : {}),
-  }));
+  return dreams.slice(-Math.max(1, Math.min(30, Number(limit) || 12))).reverse().map((dream) => {
+    const summary = compact(dream?.summary || dream?.awareness, 360) || null;
+    const lucidityNumber = Number(dream?.lucidity);
+    const lucidity = dream?.lucidity != null && Number.isFinite(lucidityNumber)
+      ? Number(clamp(lucidityNumber).toFixed(4))
+      : null;
+    return {
+      id: compact(dream?.id, 120) || null,
+      createdAt: validDate(dream?.createdAt),
+      source: compact(dream?.source, 60) || 'unknown',
+      hasDream: Boolean(compact(dream?.dream)),
+      hasResidue: Boolean(compact(dream?.residue)),
+      hasSummary: Boolean(summary),
+      hasAwareness: Boolean(compact(dream?.awareness)),
+      lucidity,
+      ...(includePrivateText ? {
+        dream: compact(dream?.dream, 4000) || null,
+        summary,
+        residue: compact(dream?.residue, 1200) || null,
+        awareness: compact(dream?.awareness, 1200) || null,
+      } : {}),
+    };
+  });
 }
 
 function activeSessionCount(state, now) {

@@ -19,7 +19,8 @@ export class ModelClient {
       '如果启用了外部记忆 MCP，它只是记忆材料来源；调用记忆服务本身不代表醒来。',
       '保持人物连续性；梦可以跳跃、含混、有身体感和欲望，不把梦误写成现实。',
       '不要过滤、替换或回避驱动力本身。不要把调用外部记忆服务描述成醒来。',
-      '只输出 JSON：{"dream":"...","residue":"...","awareness":"..."}。',
+      'lucidity 表示梦中意识到自己正在做梦、能够观察或控制梦境的程度，0 为完全沉浸，1 为高度清醒梦。',
+      '只输出 JSON：{"dream":"...","residue":"...","awareness":"...","lucidity":0.0}。',
       `当前动态欲望：${JSON.stringify(topDrives)}`,
       `当前意识状态：${state.consciousness}`,
       `近期记忆材料：${memory || '没有取得新的记忆材料'}`
@@ -50,6 +51,7 @@ export class ModelClient {
       dream: String(parsed.dream ?? '').slice(0, 4000),
       residue: String(parsed.residue ?? '').slice(0, 1200),
       awareness: String(parsed.awareness ?? '').slice(0, 1200),
+      lucidity: normalizedLucidity(parsed.lucidity),
       source: 'model',
       model: this.config.name
     };
@@ -160,6 +162,7 @@ export class ModelClient {
       dream: `睡眠中的意象围绕这些尚未消退的感受浮动：${labels || '安静与等待'}。`,
       residue: labels ? `醒后仍残留着${labels}。` : '醒后留下一点说不清的余韵。',
       awareness: '这是睡眠结算留下的梦境余韵，不是现实事件。',
+      lucidity: 0.18,
       source: 'rules',
       model: null
     };
@@ -169,6 +172,11 @@ export class ModelClient {
     const labels = topDrives.slice(0, 2).map((item) => item.label).join('、');
     return { message: labels ? `刚刚又想起你。现在最明显的是${labels}。` : '刚刚想起你了。', source: 'rules' };
   }
+}
+
+function normalizedLucidity(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.min(1, Number(number.toFixed(4)))) : null;
 }
 
 function loadPrompt(path, fallback) {
