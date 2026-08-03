@@ -2,7 +2,19 @@
 
 本项目遵循语义化版本。除非特别说明，所有外部模型、长期记忆、OAuth 与通知能力均保持默认关闭。
 
-## Unreleased
+## 2.4.0 — 2026-08-03
+
+### 用户互动 Runtime Bridge
+
+- 新增持久化 `/bridge/v1/*` 服务端队列，提供健康检查、SSE 到期通知、一次性正文读取与严格 ACK。
+- Bridge 只接受 `user_interaction`、`user_note`、`scheduled_interaction`；梦境、思念、内部状态与 AI 自主活动不能自动注入窗口。
+- Dashboard 语义互动可幂等入队；另提供便签/预约创建和脱敏队列状态读取。
+- 新增独立 `BRIDGE_MACHINE_TOKEN`，必须至少 32 字符且不能复用 Service/Dashboard 凭据。
+- 新增过期、最大队列、失败重试状态与 30 天已送达审计保留边界。
+
+### 验证
+
+- 新增队列持久化、去重、用户来源限制、HTTP 鉴权、真实投递信封与 ACK 回归测试。
 
 ### 可视化与多端接入地基
 

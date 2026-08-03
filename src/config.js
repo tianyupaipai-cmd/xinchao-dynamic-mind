@@ -78,6 +78,14 @@ export function loadConfig() {
       maxEffectsPerDay: number('INTERACTION_MAX_EFFECTS_PER_DAY', 24, 1, 96),
       timeZone: process.env.INTERACTION_TIME_ZONE ?? process.env.SETTLE_TIME_ZONE ?? 'Asia/Shanghai',
     },
+    bridge: {
+      enabled: bool('BRIDGE_ENABLED', false),
+      machineToken: process.env.BRIDGE_MACHINE_TOKEN ?? '',
+      statePath: process.env.BRIDGE_STATE_PATH ?? '/app/state/bridge-queue.json',
+      maxEntries: number('BRIDGE_MAX_ENTRIES', 500, 10, 5000),
+      ttlHours: number('BRIDGE_TTL_HOURS', 168, 1, 720),
+      pollSeconds: number('BRIDGE_POLL_SECONDS', 15, 2, 300),
+    },
     heartbeat: {
       filePath: process.env.OMBRE_HEARTBEAT_FILE ?? '/memory-data/heartbeat.json',
       // Dream residue may be shared after a shorter quiet period. Autonomous
@@ -152,6 +160,13 @@ export function validateConfig(config) {
     const local = ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
     if (parsed.protocol !== 'https:' && !(local && parsed.protocol === 'http:')) {
       throw new Error('DASHBOARD_PUBLIC_BASE_URL must use HTTPS outside localhost');
+    }
+  }
+  if (config.bridge?.enabled) {
+    const token = String(config.bridge.machineToken || '');
+    if (token.length < 32) throw new Error('BRIDGE_MACHINE_TOKEN must contain at least 32 characters when Bridge is enabled');
+    if ([config.serviceToken, config.dashboard?.accessToken].filter(Boolean).includes(token)) {
+      throw new Error('BRIDGE_MACHINE_TOKEN must be independent from service and dashboard tokens');
     }
   }
   return config;

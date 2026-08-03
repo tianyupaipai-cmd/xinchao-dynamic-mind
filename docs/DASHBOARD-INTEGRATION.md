@@ -99,13 +99,13 @@ POST /dashboard/api/interactions
 
 服务端 Bearer 等价端点为 `/v1/dashboard/timeline` 和 `/v1/dashboard/connect`。
 
-## Wake Bridge 独立协议
+## 用户互动连接桥
 
-主动推送没有写死在可视化 UI 或 Bark 里。独立包 [`packages/wake-bridge`](../packages/wake-bridge/) 定义四类有界信封：梦境余韵、思念内容、行动结果和 `pending_from_me`。
+连接桥的前提是用户已经部署并连接自己的心潮。它只运输用户主动创建的互动、便签和预约，不自动注入梦境、思念、内部状态或 AI 自主行动。
 
-信封为用户和 AI 保留两份不同 payload，并有 `pending → delivered → consumed` 状态。这样 PWA、Bark、Webhook、SSE 或未来的 AI 唤醒适配器可以替换，而心潮核心不用跟着改。
+心潮 2.4.0 提供 `/bridge/v1/*` 服务端耐久队列；独立 `xinchao-runtime-bridge` 负责本地 SSE、注入器与 ACK。启用时必须配置与其他凭据不同的 `BRIDGE_MACHINE_TOKEN`。浏览器只持有 Dashboard HttpOnly 会话，永远不能接触机器 Token。
 
-当前阶段只发布协议与隐私边界；持久队列、重试、PWA/Webhook 适配器将在独立工具包中实现，不会偷偷把原始聊天或服务密钥带出去。
+服务端只通过 SSE 通知 `deliveryId`，正文由已鉴权 Bridge 单独读取。Runtime 真正接受目标会话后才允许 ACK `delivered`；临时失败使用 `retryable_failed`，消息继续留在耐久队列。浏览器可创建互动，但看不到机器 Token。
 
 ## 心跳档位
 

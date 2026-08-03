@@ -1,4 +1,4 @@
-# 心潮动态心智系统 2.3.3
+# 心潮动态心智系统 2.4.0
 
 ![心潮动态心智系统](docs/cover.png)
 
@@ -6,7 +6,12 @@
 
 > 心潮模拟可解释的动态状态，不宣称产生意识、情感或生命。核心状态机可离线运行；模型、长期记忆、OAuth 和通知均为可选适配器。
 
-## 2.3.x 更新重点
+## 2.4.0 更新重点
+
+- **用户互动连接桥服务端**：新增 `/bridge/v1/*` 耐久队列、SSE 通知、一次性投递读取与严格 ACK。
+- **只供用户互动**：只接受用户主动发出的互动、便签和预约；梦境、思念、内部状态与 AI 自主行动不会自动注入窗口。
+- **独立机器凭据**：Bridge 使用独立于 `SERVICE_TOKEN` 和 Dashboard 口令的机器 Token，默认关闭。
+- **持久、幂等、可恢复**：投递按 `event_id` 去重，离线时继续保存，失败 ACK 不会把消息误标为送达。
 
 - **HTTP 便签闭环**：补齐 `POST /v1/handoff-note`，HTTP 前端与 MCP 客户端现在使用同一套有界、幂等的短期交接。
 - **在场时间修复**：heartbeat 和真实 `xinchao_event` 都会刷新 `lastHeartbeatAt`，避免在线时被自主推送误判为长期离线。
@@ -29,7 +34,7 @@
 - 不含正文的结构化潮汐时间线；
 - 面向网页 AI、本地 Agent、手机网页与自建后端的接入清单；
 - 独立 Dashboard 口令换取 HttpOnly 只读会话，浏览器无需接触 `SERVICE_TOKEN`；
-- 独立 [`Wake Bridge`](packages/wake-bridge/) 消息信封协议，为梦境余韵、思念内容和自主行动结果预留用户/AI 双通道。
+- 独立用户互动 Runtime Bridge 协议；网页只提交语义互动，不直接修改心潮数值。
 
 接口、环境变量和前端示例见 [可视化与多终端接入地基](docs/DASHBOARD-INTEGRATION.md)。视觉主题、花瓣与梦境星云可以独立迭代，不需要重写服务端。
 
@@ -141,6 +146,29 @@ Authorization: Bearer <SERVICE_TOKEN>
 | `GET` | `/v1/dashboard/connect` | 多端接入能力清单（无凭据） |
 | `POST` | `/mcp` | Streamable HTTP MCP |
 
+## 用户互动连接桥
+
+连接桥是可选能力，但前提是先部署好心潮。它只将用户主动发出的互动、便签与预约交给用户指定的 AI Runtime；不会自动投递梦境、思念、心潮数值或 AI 的自主内容。
+
+启用服务端队列：
+
+```env
+BRIDGE_ENABLED=true
+BRIDGE_MACHINE_TOKEN=独立随机口令（至少32字符）
+BRIDGE_STATE_PATH=/app/state/bridge-queue.json
+```
+
+机器接口均要求 `Authorization: Bearer <BRIDGE_MACHINE_TOKEN>`：
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| `GET` | `/bridge/v1/health` | 协议与健康检查 |
+| `GET` | `/bridge/v1/events` | SSE，只通知到期的 `deliveryId` |
+| `GET` | `/bridge/v1/deliveries/:id` | 读取一次待投递用户互动 |
+| `POST` | `/bridge/v1/deliveries/:id/ack` | 回传 `delivered` 或 `retryable_failed` |
+
+Dashboard 会话可通过 `POST /dashboard/api/bridge/deliveries` 创建用户便签或预约。机器 Token 不得写入浏览器、URL、日志或公开仓库。客户端见独立项目 [xinchao-runtime-bridge](https://github.com/tianyupaipai-cmd/xinchao-runtime-bridge)。
+
 ## 心跳接入档位
 
 heartbeat 与 `breath` 的定位不同：`breath` 是可能返回上下文的按需记忆检索；heartbeat 只发送 `session_id` 和不透明的 `event_id`，不上传提示词或回复、不注入模型上下文，因此本身不消耗上下文 token。档位差异只影响实时性和网络请求量：
@@ -226,7 +254,7 @@ src/             状态机、MCP、OAuth、Dashboard 投影与可选适配器
 test/            Node.js 原生测试
 configs/         可替换提示词
 scripts/         本地配置、部署与烟雾测试
-packages/        可独立使用的 Wake Bridge 消息协议
+packages/        可独立使用的有界消息信封协议
 state/           运行状态挂载目录（不提交真实数据）
 memory-data/     可选外部心跳挂载目录
 ```

@@ -23,6 +23,11 @@ function config(overrides = {}) {
       publicBaseUrl: 'https://xinchao.example.com',
       ...(overrides.dashboard || {}),
     },
+    bridge: {
+      enabled: false,
+      machineToken: '',
+      ...(overrides.bridge || {}),
+    },
   };
 }
 
@@ -107,4 +112,13 @@ test('public Dashboard requires an HTTPS base URL', () => {
     })).dashboard.enabled,
     true,
   );
+});
+
+test('Bridge requires an independent strong machine token', () => {
+  assert.throws(() => validateConfig(config({ bridge: { enabled: true, machineToken: 'short' } })), /at least 32 characters/);
+  const shared = 'b'.repeat(32);
+  const sameAsService = config({ bridge: { enabled: true, machineToken: shared } });
+  sameAsService.serviceToken = shared;
+  assert.throws(() => validateConfig(sameAsService), /must be independent/);
+  assert.equal(validateConfig(config({ bridge: { enabled: true, machineToken: 'm'.repeat(32) } })).bridge.enabled, true);
 });

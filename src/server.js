@@ -15,6 +15,7 @@ import { OAuthProvider } from './oauth-provider.js';
 import { recordHandoffNote } from './handoff-notes.js';
 import { DashboardAuth } from './dashboard-auth.js';
 import { buildConnectionManifest, buildDashboardSnapshot } from './dashboard-projection.js';
+import { BRIDGE_SERVER_PROTOCOL, BRIDGE_STREAM_PROTOCOL, BridgeQueue } from './bridge-queue.js';
 
 const config = validateConfig(loadConfig());
 if (!config.serviceToken) throw new Error('SERVICE_TOKEN is required');
@@ -30,9 +31,11 @@ const dashboardAuth = new DashboardAuth({
   ttlSeconds: config.dashboard.sessionTtlSeconds,
   secureCookies: config.dashboard.publicBaseUrl.startsWith('https://'),
 });
+const bridgeQueue = new BridgeQueue(config.bridge.statePath, config.bridge);
+const bridgeStreams = new Set();
 await oauth.init();
 let cyclePromise = null;
-const SYSTEM_VERSION = '2.3.3';
+const SYSTEM_VERSION = '2.4.0';
 
 function log(event, fields = {}) {
   console.log(JSON.stringify({ at: new Date().toISOString(), event, ...fields }));
@@ -300,6 +303,29 @@ function authorized(request) {
   return safeEqual(supplied, config.serviceToken);
 }
 
+function bridgeAuthorized(request) {
+  const supplied = request.headers.authorization?.replace(/^Bearer\s+/i, '') ?? '';
+  return Boolean(config.bridge.enabled) && safeEqual(supplied, config.bridge.machineToken);
+}
+
+function sendBridgeEvent(response, event, value) {
+  response.write(`event: ${event}\n`);
+  response.write(`data: ${JSON.stringify(value)}\n\n`);
+}
+
+async function publishReadyBridgeDeliveries() {
+  if (!config.bridge.enabled || !bridgeStreams.size) return;
+  const ready = await bridgeQueue.ready();
+  for (const delivery of ready) {
+    for (const response of bridgeStreams) {
+      sendBridgeEvent(response, 'delivery', {
+        protocol: BRIDGE_STREAM_PROTOCOL,
+        deliveryId: delivery.id,
+      });
+    }
+  }
+}
+
 function mcpPath(url) {
   return url.pathname === '/mcp' || url.pathname.startsWith('/mcp/');
 }
@@ -536,6 +562,43 @@ function dashboardInteractionFromHttp(payload = {}) {
   };
 }
 
+const INTERACTION_BRIDGE_MESSAGES = Object.freeze({
+  affection: '用户刚刚给了你一个拥抱。',
+  companionship: '用户刚刚选择陪你待一会儿。',
+  sharing: '用户刚刚留下了想与你分享一件事的心意。',
+  reassurance: '用户刚刚回应了你的不安，想让你知道自己在这里。',
+  task_progress: '用户刚刚选择陪你推进一件共同待办。',
+  reconciliation: '用户刚刚主动回应了一次和解。',
+  intimacy: '用户刚刚主动靠近了你。',
+  conflict: '用户刚刚明确表达了一次冲突，需要在下次连接时被看见。',
+  loss: '用户刚刚回应了你的难过，愿意陪你一起承受。',
+});
+
+async function enqueueDashboardInteraction(event, result) {
+  if (!config.bridge.enabled || result.duplicate) return null;
+  const message = INTERACTION_BRIDGE_MESSAGES[event.interactionType] ?? '用户刚刚从心潮小屋发来一次互动。';
+  const queued = await bridgeQueue.enqueue({
+    eventId: event.eventId,
+    reason: 'user_interaction',
+    message,
+  });
+  await publishReadyBridgeDeliveries();
+  return { queued: true, deliveryId: queued.delivery.id, duplicate: queued.duplicate };
+}
+
+function bridgeDeliveryFromDashboard(payload = {}, now = new Date()) {
+  const allowed = new Set(['event_id', 'eventId', 'message', 'deliver_after', 'deliverAfter']);
+  const unexpected = Object.keys(payload).filter((key) => !allowed.has(key));
+  if (unexpected.length) throw new Error('bridge delivery only accepts event_id, message and deliver_after');
+  const eventId = String(payload.event_id ?? payload.eventId ?? '').trim();
+  const message = String(payload.message ?? '').replace(/\s+/g, ' ').trim();
+  const deliverAfter = payload.deliver_after ?? payload.deliverAfter ?? null;
+  if (eventId.length < 8 || eventId.length > 120) throw new Error('event_id must contain 8 to 120 characters');
+  if (!message || message.length > 1200) throw new Error('message must contain 1 to 1200 characters');
+  const scheduled = deliverAfter && Date.parse(deliverAfter) > now.getTime();
+  return { eventId, message, deliverAfter, reason: scheduled ? 'scheduled_interaction' : 'user_note' };
+}
+
 function handoffNoteFromHttp(payload = {}) {
   return {
     sessionId: payload.sessionId ?? payload.session_id,
@@ -557,6 +620,47 @@ const server = createServer(async (request, response) => {
       });
     }
     if (await oauth.handle(request, response, url)) return;
+    if (url.pathname.startsWith('/bridge/v1')) {
+      if (!config.bridge.enabled) return send(response, 404, { error: 'not found' });
+      if (!bridgeAuthorized(request)) return send(response, 401, { error: 'unauthorized' });
+      if (request.method === 'GET' && url.pathname === '/bridge/v1/health') {
+        return send(response, 200, { protocol: BRIDGE_SERVER_PROTOCOL, status: 'ok' });
+      }
+      if (request.method === 'GET' && url.pathname === '/bridge/v1/events') {
+        response.writeHead(200, {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-store, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+        sendBridgeEvent(response, 'connected', { protocol: BRIDGE_STREAM_PROTOCOL });
+        bridgeStreams.add(response);
+        const heartbeat = setInterval(() => response.write(': heartbeat\n\n'), 20_000);
+        heartbeat.unref();
+        request.on('close', () => {
+          clearInterval(heartbeat);
+          bridgeStreams.delete(response);
+        });
+        await publishReadyBridgeDeliveries();
+        return;
+      }
+      const deliveryMatch = url.pathname.match(/^\/bridge\/v1\/deliveries\/([^/]+)$/);
+      if (deliveryMatch && request.method === 'GET') {
+        const delivery = await bridgeQueue.get(decodeURIComponent(deliveryMatch[1]));
+        return delivery ? send(response, 200, delivery) : send(response, 404, { error: 'delivery not found' });
+      }
+      const acknowledgementMatch = url.pathname.match(/^\/bridge\/v1\/deliveries\/([^/]+)\/ack$/);
+      if (acknowledgementMatch && request.method === 'POST') {
+        const payload = await body(request);
+        const item = await bridgeQueue.acknowledge(
+          decodeURIComponent(acknowledgementMatch[1]),
+          payload.status,
+          payload.code,
+        );
+        return item ? send(response, 200, { ok: true, deliveryId: item.id, status: item.status }) : send(response, 404, { error: 'delivery not found' });
+      }
+      return send(response, 404, { error: 'not found' });
+    }
     if (url.pathname === '/dashboard/session') {
       if (!config.dashboard.enabled) return send(response, 404, { error: 'not found' });
       if (request.method !== 'POST') return send(response, 405, { error: 'method not allowed' }, { Allow: 'POST' });
@@ -588,10 +692,35 @@ const server = createServer(async (request, response) => {
         if (request.method !== 'POST') return send(response, 405, { error: 'method not allowed' }, { Allow: 'POST' });
         try {
           const event = dashboardInteractionFromHttp(await body(request));
-          return send(response, 200, await recordConversationEvent(event, 'dashboard'));
+          const result = await recordConversationEvent(event, 'dashboard');
+          const bridge = await enqueueDashboardInteraction(event, result);
+          return send(response, 200, { ...result, bridge });
         } catch (error) {
           return send(response, 400, { error: error.message });
         }
+      }
+      if (url.pathname === '/dashboard/api/bridge/deliveries') {
+        if (!config.bridge.enabled) return send(response, 503, { error: 'bridge disabled' });
+        if (request.method === 'GET') {
+          const items = await bridgeQueue.list({ limit: url.searchParams.get('limit') });
+          return send(response, 200, { items: items.map(({ message, ...item }) => ({ ...item, hasMessage: Boolean(message) })) });
+        }
+        if (request.method === 'POST') {
+          try {
+            const input = bridgeDeliveryFromDashboard(await body(request));
+            const result = await bridgeQueue.enqueue(input);
+            await publishReadyBridgeDeliveries();
+            return send(response, result.duplicate ? 200 : 201, {
+              queued: true,
+              duplicate: result.duplicate,
+              deliveryId: result.delivery.id,
+              deliverAfter: result.delivery.deliverAfter,
+            });
+          } catch (error) {
+            return send(response, 400, { error: error.message });
+          }
+        }
+        return send(response, 405, { error: 'method not allowed' }, { Allow: 'GET, POST' });
       }
       if (request.method !== 'GET') return send(response, 405, { error: 'method not allowed' }, { Allow: 'GET' });
       const payload = await dashboardPayload(url.pathname, url);
@@ -718,11 +847,15 @@ const server = createServer(async (request, response) => {
 
 server.listen(config.port, '0.0.0.0', async () => {
   await store.read();
-  log('service_started', { port: config.port, shadow: config.shadowMode, modelEnabled: config.model.enabled, barkEnabled: config.bark.enabled });
+  if (config.bridge.enabled) await bridgeQueue.init();
+  log('service_started', { port: config.port, shadow: config.shadowMode, modelEnabled: config.model.enabled, barkEnabled: config.bark.enabled, bridgeEnabled: config.bridge.enabled });
 });
 
 const timer = setInterval(() => runCycle().catch((error) => log('cycle_failed', { message: error.message })), config.settleIntervalMinutes * 60_000);
 timer.unref();
+
+const bridgeTimer = setInterval(() => publishReadyBridgeDeliveries().catch((error) => log('bridge_publish_failed', { message: error.message })), config.bridge.pollSeconds * 1000);
+bridgeTimer.unref();
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => server.close(() => process.exit(0)));

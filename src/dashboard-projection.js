@@ -134,7 +134,7 @@ export function buildDashboardSnapshot(state = {}, config = {}, now = new Date()
       externalMemoryRead: Boolean(config.ombre?.readEnabled),
       externalMemoryWrite: Boolean(config.ombre?.writeEnabled),
       notifications: Boolean(config.bark?.enabled),
-      wakeBridgeProtocol: true,
+      wakeBridgeProtocol: Boolean(config.bridge?.enabled),
       privateDreamText: Boolean(config.dashboard?.includePrivateText),
     },
   };
@@ -180,6 +180,14 @@ export function buildConnectionManifest(config = {}) {
         endpoint: dashboardBaseUrl ? `${dashboardBaseUrl}/v1` : '/v1',
         note: '适合后端代理和自动化；不应由浏览器直接保存 SERVICE_TOKEN。',
       },
+      {
+        id: 'runtime-bridge',
+        audience: ['self-hosted-runtime', 'local-agent', 'custom-frontend-backend'],
+        enabled: Boolean(config.bridge?.enabled),
+        auth: 'dedicated-machine-bearer',
+        endpoint: dashboardBaseUrl ? `${dashboardBaseUrl}/bridge/v1` : '/bridge/v1',
+        note: '仅投递用户互动、便签和预约；机器 Token 只保存在 Bridge 本地环境。',
+      },
     ],
     heartbeatProfiles: [
       { id: 'realtime', audience: 'large-context-agent', recommendation: 'message-hook' },
@@ -188,7 +196,7 @@ export function buildConnectionManifest(config = {}) {
     ],
     secrets: {
       included: false,
-      note: '此清单永不返回 SERVICE_TOKEN、OAuth 令牌或 Dashboard 访问口令。',
+      note: '此清单永不返回 SERVICE_TOKEN、OAuth 令牌、Dashboard 访问口令或 Bridge 机器 Token。',
     },
   };
 }

@@ -42,6 +42,7 @@ test('POST /v1/handoff-note stores a bounded idempotent note for HTTP clients', 
   const port = await freePort();
   const token = 'http-api-test-token';
   const dashboardToken = 'dashboard-http-test-token-32-characters';
+  const bridgeToken = 'bridge-http-test-token-32-characters';
   const baseUrl = `http://127.0.0.1:${port}`;
   const output = { value: '' };
   const child = spawn(process.execPath, [serverPath], {
@@ -65,6 +66,9 @@ test('POST /v1/handoff-note stores a bounded idempotent note for HTTP clients', 
       DASHBOARD_ENABLED: 'true',
       DASHBOARD_ACCESS_TOKEN: dashboardToken,
       DASHBOARD_PUBLIC_BASE_URL: baseUrl,
+      BRIDGE_ENABLED: 'true',
+      BRIDGE_MACHINE_TOKEN: bridgeToken,
+      BRIDGE_STATE_PATH: join(directory, 'bridge-queue.json'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -211,12 +215,48 @@ test('POST /v1/handoff-note stores a bounded idempotent note for HTTP clients', 
   assert.equal(interactionResult.interaction.type, 'affection');
   assert.equal(interactionResult.interaction.applied, true);
   assert.deepEqual(interactionResult.interaction.affectedDrives, ['possess', 'crave', 'monitor']);
+  assert.equal(interactionResult.bridge.queued, true);
+
+  const bridgeUnauthorized = await fetch(`${baseUrl}/bridge/v1/health`);
+  assert.equal(bridgeUnauthorized.status, 401);
+  const bridgeHeaders = { authorization: `Bearer ${bridgeToken}` };
+  const bridgeHealth = await fetch(`${baseUrl}/bridge/v1/health`, { headers: bridgeHeaders });
+  assert.deepEqual(await bridgeHealth.json(), { protocol: 'xinchao-bridge-server/1', status: 'ok' });
+  const bridgeDelivery = await fetch(`${baseUrl}/bridge/v1/deliveries/${interactionResult.bridge.deliveryId}`, { headers: bridgeHeaders });
+  assert.equal(bridgeDelivery.status, 200);
+  const runtimeEnvelope = await bridgeDelivery.json();
+  assert.equal(runtimeEnvelope.protocol, 'xinchao-runtime-wake/1');
+  assert.equal(runtimeEnvelope.reason, 'user_interaction');
+  assert.match(runtimeEnvelope.message, /拥抱/);
+  const bridgeAck = await fetch(`${baseUrl}/bridge/v1/deliveries/${interactionResult.bridge.deliveryId}/ack`, {
+    method: 'POST',
+    headers: { ...bridgeHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify({ status: 'delivered' }),
+  });
+  assert.equal(bridgeAck.status, 200);
+  assert.equal((await bridgeAck.json()).status, 'delivered');
 
   const duplicateInteraction = await interactionRequest();
   assert.equal(duplicateInteraction.status, 200);
   const duplicateResult = await duplicateInteraction.json();
   assert.equal(duplicateResult.duplicate, true);
   assert.equal(duplicateResult.interaction.reasonCode, 'duplicate_event');
+  assert.equal(duplicateResult.bridge, null);
+
+  const userNote = await fetch(`${baseUrl}/dashboard/api/bridge/deliveries`, {
+    method: 'POST',
+    headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      event_id: 'dashboard-note-0001',
+      message: '我晚一点回来，先帮我记着。',
+    }),
+  });
+  assert.equal(userNote.status, 201);
+  const noteResult = await userNote.json();
+  const noteEnvelopeResponse = await fetch(`${baseUrl}/bridge/v1/deliveries/${noteResult.deliveryId}`, { headers: bridgeHeaders });
+  const noteEnvelope = await noteEnvelopeResponse.json();
+  assert.equal(noteEnvelope.reason, 'user_note');
+  assert.equal(noteEnvelope.message, '我晚一点回来，先帮我记着。');
 
   const serviceSnapshot = await fetch(`${baseUrl}/v1/dashboard/snapshot`, {
     headers: { authorization: `Bearer ${token}` },

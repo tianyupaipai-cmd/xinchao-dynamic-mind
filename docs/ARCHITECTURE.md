@@ -66,7 +66,7 @@ Context Envelope 负责传输短期状态，不负责保存或压缩稳定核心
 - `BarkClient`：可选手机通知。
 - `OAuthProvider`：远程 MCP 的 OAuth 2.1、PKCE 与动态客户端注册。
 - `DashboardAuth`：独立访问口令换取同源 HttpOnly 只读会话。
-- `Wake Bridge Protocol`：独立的用户/AI 主动交付信封，不绑定具体推送供应商。
+- `Runtime Bridge Queue`：只处理用户主动互动、便签和预约，不运输 AI 内部状态。
 
 ## 可视化边界
 

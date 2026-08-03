@@ -84,7 +84,7 @@ test('connection manifest supports different clients without returning secrets',
   const raw = JSON.stringify(manifest);
   assert.deepEqual(
     manifest.profiles.map((profile) => profile.id),
-    ['web-dashboard', 'remote-mcp-oauth', 'remote-mcp-bearer', 'http-api'],
+    ['web-dashboard', 'remote-mcp-oauth', 'remote-mcp-bearer', 'http-api', 'runtime-bridge'],
   );
   assert.equal(manifest.profiles[0].auth, 'http-only-session-cookie');
   assert.equal(manifest.secrets.included, false);
