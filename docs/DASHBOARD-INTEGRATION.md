@@ -56,7 +56,17 @@ const snapshot = await fetch('/dashboard/api/snapshot', {
 }).then((response) => response.json());
 ```
 
-当前 Dashboard API 全部只读，不提供修改驱动力、删除记忆或执行管理动作的浏览器接口。
+除下述语义互动外，Dashboard API 保持只读，不提供直接修改驱动力、删除记忆或执行管理动作的浏览器接口。
+
+唯一的有界写入口是语义互动事件：
+
+```text
+POST /dashboard/api/interactions
+```
+
+请求只接受不可重复的 `event_id` 与固定枚举 `interaction_type`。它不接受
+`driveDeltas`、目标数值或满足倍率；服务端根据既有规则结算，并受幂等与每日次数上限保护。
+因此网页可以表达“抱抱、陪伴、分享、和好”等已经发生的动作，但不能直接操纵十二维数值。
 
 ## UI 数据接口
 

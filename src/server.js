@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { loadConfig, validateConfig } from './config.js';
-import { applyDriveFeedback, applyOmbreHeartbeat, barkAllowed, breathDreamContext, contactIdleAllowed, daytimeEmergenceAllowed, dreamAllowed, newState, pickIntent, proactiveBarkAllowed, recordBark, recordDaytimeEmergence, recordDream, scheduleDaytimeEmergence, settleAndApplyConversationEvent, settleState, topDrives } from './engine.js';
+import { INTERACTION_TYPES, applyDriveFeedback, applyOmbreHeartbeat, barkAllowed, breathDreamContext, contactIdleAllowed, daytimeEmergenceAllowed, dreamAllowed, newState, pickIntent, proactiveBarkAllowed, recordBark, recordDaytimeEmergence, recordDream, scheduleDaytimeEmergence, settleAndApplyConversationEvent, settleState, topDrives } from './engine.js';
 import { selectUniqueBark } from './bark-dedupe.js';
 import { StateStore } from './state-store.js';
 import { ModelClient } from './model-client.js';
@@ -521,6 +521,21 @@ async function saveHandoffNote(note, source = 'mcp', now = new Date()) {
   };
 }
 
+function dashboardInteractionFromHttp(payload = {}) {
+  const allowedKeys = new Set(['event_id', 'eventId', 'interaction_type', 'interactionType']);
+  const unexpected = Object.keys(payload).filter((key) => !allowedKeys.has(key));
+  if (unexpected.length) throw new Error('interaction payload only accepts event_id and interaction_type');
+  const eventId = String(payload.event_id ?? payload.eventId ?? '').trim();
+  const interactionType = String(payload.interaction_type ?? payload.interactionType ?? '').trim().toLowerCase();
+  if (eventId.length < 8 || eventId.length > 120) throw new Error('event_id must contain 8 to 120 characters');
+  if (!INTERACTION_TYPES.includes(interactionType)) throw new Error('interaction_type is not supported');
+  return {
+    sessionId: 'dashboard-interaction',
+    eventId,
+    interactionType,
+  };
+}
+
 function handoffNoteFromHttp(payload = {}) {
   return {
     sessionId: payload.sessionId ?? payload.session_id,
@@ -569,6 +584,15 @@ const server = createServer(async (request, response) => {
     }
     if (url.pathname.startsWith('/dashboard/api/')) {
       if (!dashboardAuth.validateRequest(request)) return send(response, 401, { error: 'unauthorized' });
+      if (url.pathname === '/dashboard/api/interactions') {
+        if (request.method !== 'POST') return send(response, 405, { error: 'method not allowed' }, { Allow: 'POST' });
+        try {
+          const event = dashboardInteractionFromHttp(await body(request));
+          return send(response, 200, await recordConversationEvent(event, 'dashboard'));
+        } catch (error) {
+          return send(response, 400, { error: error.message });
+        }
+      }
       if (request.method !== 'GET') return send(response, 405, { error: 'method not allowed' }, { Allow: 'GET' });
       const payload = await dashboardPayload(url.pathname, url);
       return payload ? send(response, 200, payload) : send(response, 404, { error: 'not found' });

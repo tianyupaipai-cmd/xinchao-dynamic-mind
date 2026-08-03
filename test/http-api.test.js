@@ -186,6 +186,38 @@ test('POST /v1/handoff-note stores a bounded idempotent note for HTTP clients', 
   assert.equal(snapshot.capabilities.privateDreamText, false);
   assert.doesNotMatch(JSON.stringify(snapshot), /HTTP 客户端的近期进度/);
 
+  const directNumericMutation = await fetch(`${baseUrl}/dashboard/api/interactions`, {
+    method: 'POST',
+    headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      event_id: 'dashboard-forbidden-1',
+      interaction_type: 'affection',
+      driveDeltas: { possess: -1 },
+    }),
+  });
+  assert.equal(directNumericMutation.status, 400);
+
+  const interactionRequest = () => fetch(`${baseUrl}/dashboard/api/interactions`, {
+    method: 'POST',
+    headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      event_id: 'dashboard-affection-1',
+      interaction_type: 'affection',
+    }),
+  });
+  const interaction = await interactionRequest();
+  assert.equal(interaction.status, 200);
+  const interactionResult = await interaction.json();
+  assert.equal(interactionResult.interaction.type, 'affection');
+  assert.equal(interactionResult.interaction.applied, true);
+  assert.deepEqual(interactionResult.interaction.affectedDrives, ['possess', 'crave', 'monitor']);
+
+  const duplicateInteraction = await interactionRequest();
+  assert.equal(duplicateInteraction.status, 200);
+  const duplicateResult = await duplicateInteraction.json();
+  assert.equal(duplicateResult.duplicate, true);
+  assert.equal(duplicateResult.interaction.reasonCode, 'duplicate_event');
+
   const serviceSnapshot = await fetch(`${baseUrl}/v1/dashboard/snapshot`, {
     headers: { authorization: `Bearer ${token}` },
   });
