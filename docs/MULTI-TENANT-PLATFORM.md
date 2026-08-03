@@ -19,9 +19,10 @@ V1 必须完成：
 5. 展示 12 维花瓣、意识状态、梦境元数据和脱敏变化时间线；
 6. 用户通过有界语义动作与 AI 互动；
 7. AI 通过 Wake Bridge 留下梦境余韵、思念内容、行动结果和待说出口的事；
-8. 支持消息的未读、已交付和已消费状态；
-9. 支持小屋级多主题切换及用户自己的显示偏好；
-10. 支持导出和删除用户自己的平台数据。
+8. 用户互动可以预约在未来通过独立的 Scheduled Bridge 交给 AI；
+9. 支持消息的待调度、待投递、已交付和已消费状态；
+10. 支持小屋级多主题切换及用户自己的显示偏好；
+11. 支持导出和删除用户自己的平台数据。
 
 V1 不做：
 
@@ -119,6 +120,92 @@ V1 不做：
 
 用户读过不等于 AI 已经说过。两种消费状态在平台存储中需要分别记录。
 
+## 定时连接桥
+
+用户互动可以选择“现在交给他”或预约一个未来时间。预约不会直接操作驱动力，也不会把后台任务伪装成一段已经发生的对话；它创建一封带 `deliver_after` 的 Wake Bridge 信封，由独立的 Scheduled Bridge 负责投递。
+
+```text
+用户互动
+  → 生成有界语义事件
+  → 创建定时信封（scheduled）
+  → 到点进入待投递队列（pending）
+  → 按当前可达通道投递
+      ├─ 本地 Agent / 自建前端在线：立即唤醒并注入
+      ├─ 活跃的 MCP 会话：下一次 context/tool 边界注入
+      ├─ Webhook / SSE 消费者在线：发送通知并等待确认
+      └─ 官方窗口关闭或不可达：保留 pending
+  → AI 确认收到（delivered）
+  → AI 读取或完成回应（consumed）
+```
+
+“定时”保证的是到点进入投递队列，不保证能唤醒一个已经关闭、且没有后台 Hook 能力的官方客户端。桥必须明确显示 `scheduled`、`waiting_for_ai`、`delivered`、`consumed` 和 `expired`，不能把排队成功显示成 AI 已收到。
+
+### 可达能力
+
+每个 AI 连接在授权时声明能力，而不是由页面猜测：
+
+- `background_wake`：本地 Agent 或自建前端可被后台任务唤醒；
+- `active_session_inject`：只能在当前在线会话的安全边界注入；
+- `next_context_delivery`：官方窗口重连或下次请求时补投；
+- `human_push_only`：只能先通知用户，由用户打开窗口；
+- `receipt_ack`：接收方能够回传已收到与已消费状态。
+
+官方 Claude、ChatGPT 或其他托管网页的关闭窗口，默认只能使用 `next_context_delivery` 或 `human_push_only`；除非平台正式提供后台接口，否则不得宣称支持关窗唤醒。
+
+### 调度与安全
+
+- 预约任务必须绑定 `home_id`、`ai_identity_id`、创建者和时区；
+- 使用稳定的 UTC 时间保存 `deliver_after`，界面按用户时区展示；
+- 每封信使用 `dedupe_key` 与幂等投递，重试不能重复影响 AI；
+- 用户可以在进入 `delivered` 前取消或改期；
+- 正文不进入系统日志，队列只保存信封引用；
+- 设定每日数量、最长保留期和指数退避，避免离线 AI 形成无限积压；
+- 到期仍不可达时转为 `expired`，不得静默丢弃。
+
+### 本地 Runtime Bridge
+
+自建前端、Claude Code、Codex、Cyberboss 等能够接受后台消息的环境，使用一个与平台和心潮核心都解耦的本地 Runtime Bridge。其边界参考 [Galatea Garden Wake Bridge](https://github.com/WenXiaoWendy/galatea-garden-wake-bridge)：传输层不猜测线程、不直接修改运行时文件，只调用用户为目标 Runtime 配置的 Adapter。
+
+```text
+心潮平台的耐久投递队列
+  → 已鉴权的 SSE 只通知 delivery_id
+  → 本地 Bridge 拉取一次性投递内容
+  → stdin 写入版本化 JSON 信封
+  → Runtime Adapter 定位账号、workspace、thread 和真正的入站入口
+  → Runtime 返回“已接受”回执
+  → Bridge 向平台 ACK delivered
+```
+
+本地 injector 信封另用 `xinchao-runtime-wake/1`，不要把平台存储信封直接暴露给任意子进程：
+
+```json
+{
+  "protocol": "xinchao-runtime-wake/1",
+  "deliveryId": "01J...",
+  "reason": "scheduled_interaction",
+  "message": "她刚才留下一次拥抱，希望你回来的时候能想起来。"
+}
+```
+
+采用以下原则：
+
+- `message` 作为普通入站 user turn，不提升为 system prompt；
+- 通过 stdin 传递 JSON，启动子进程时使用 `shell: false`；
+- Bridge 的机器 Token 不传给 Adapter，Runtime 凭据由 Adapter 自己管理；
+- Bridge 只记录 `deliveryId`、reason、结果码和耗时，不记录正文；
+- 同一 AI 的投递串行，Adapter 真正接受正确会话后才能返回成功；
+- “Runtime 已接受”“AI 已完成回应”“当前 UI 已实时显示”是三个不同回执；
+- 心跳只维持连接，绝不能触发注入；
+- 传输连接异常时 V1 fail closed，不在客户端无限自动重连；消息仍安全留在服务端耐久队列，修复后可继续投递。
+
+参考实现中“忙碌时同 reason 只保留最新一条”的策略不能全盘照搬。心潮按消息语义声明合并方式：
+
+- `replace_latest`：状态刷新、重复的轻提醒可以合并；
+- `keep_all`：明确预约、纪念性互动、梦境余韵和用户写下的内容必须逐条保存；
+- `aggregate`：短时间内多次同类轻互动可以汇总成一封自然语言信封。
+
+任何 Adapter 都要做“同分支验证”：投递后在目标会话继续一轮，确认上一条消息真的成为该会话上下文。只看到子进程退出码、数据库记录或稍后出现的历史，不足以证明官方窗口已经实时收到。
+
 ## 多租户数据模型
 
 建议使用 PostgreSQL。所有业务表必须包含 `home_id`，并在仓储层强制作为查询条件。
@@ -155,11 +242,17 @@ transition_journal
 
 wake_messages
   id, home_id, ai_identity_id, kind, audience,
-  human_payload, ai_payload, dedupe_key, expires_at, created_at
+  human_payload, ai_payload, dedupe_key, deliver_after,
+  schedule_status, expires_at, created_at
 
 wake_deliveries
   wake_message_id, consumer_kind, consumer_id,
+  channel, attempt_count, next_attempt_at, last_error_code,
   delivered_at, consumed_at
+
+ai_delivery_capabilities
+  ai_identity_id, channel, capabilities_json,
+  last_seen_at, expires_at
 
 connections
   id, home_id, ai_identity_id, kind, status,
@@ -203,6 +296,9 @@ GET /platform/homes/:homeId/wake-messages
 
 ```text
 POST /platform/homes/:homeId/interactions
+POST /platform/homes/:homeId/scheduled-deliveries
+PATCH /platform/homes/:homeId/scheduled-deliveries/:deliveryId
+DELETE /platform/homes/:homeId/scheduled-deliveries/:deliveryId
 ```
 
 请求示例：
@@ -234,6 +330,8 @@ GET /platform/homes/:homeId/events
 - `timeline.appended`
 - `wake.created`
 - `wake.delivered`
+- `wake.waiting_for_ai`
+- `wake.expired`
 - `connection.changed`
 - `theme.changed`
 
@@ -362,9 +460,10 @@ interface MindRepository {
 4. 接入 Dashboard Projection；
 5. 实现语义互动及幂等结算；
 6. 持久化 Wake Bridge 与双消费者状态；
-7. 增加 SSE；
-8. 完成 OAuth MCP 的租户绑定；
-9. 建立主题包 Token、素材清单和主题预览；
-10. 最后接入完整视觉稿和公开主页。
+7. 实现 Scheduled Bridge、能力声明、定时队列与投递回执；
+8. 增加 SSE；
+9. 完成 OAuth MCP 的租户绑定；
+10. 建立主题包 Token、素材清单和主题预览；
+11. 最后接入完整视觉稿和公开主页。
 
 第一条必须按 key 映射，例如 `possess`、`monitor`、`crave`，不能继续依赖 12 个数组位置；否则 UI 顺序调整会把“分享”显示成“性欲”等错误维度。
