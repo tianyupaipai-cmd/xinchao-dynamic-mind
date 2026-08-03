@@ -64,3 +64,19 @@ test('context audit records only digest and delivery metadata', async () => {
   assert.equal(record.details.estimatedTokens, 320);
   assert.equal('content' in record, false);
 });
+
+test('transition journal lists recent privacy-safe records with filters and bounds', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'xinchao-journal-list-'));
+  const path = join(directory, 'transitions.jsonl');
+  const journal = new TransitionJournal(path);
+  await journal.append({ id: '1', at: '2026-08-03T08:00:00.000Z', type: 'settle', delta: {} });
+  await journal.append({ id: '2', at: '2026-08-03T09:00:00.000Z', type: 'conversation_event', delta: {} });
+  await journal.append({ id: '3', at: '2026-08-03T10:00:00.000Z', type: 'settle', delta: {} });
+
+  assert.deepEqual((await journal.list({ limit: 2 })).map((item) => item.id), ['3', '2']);
+  assert.deepEqual((await journal.list({ types: ['settle'] })).map((item) => item.id), ['3', '1']);
+  assert.deepEqual(
+    (await journal.list({ since: '2026-08-03T09:30:00.000Z' })).map((item) => item.id),
+    ['3'],
+  );
+});

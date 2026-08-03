@@ -1,4 +1,4 @@
-# 心潮 2.3.1 架构
+# 心潮架构
 
 ## 设计目标
 
@@ -12,6 +12,9 @@
         | HTTP 或 Streamable HTTP MCP
         v
  OAuth / Bearer 认证
+        |
+        v
+  Dashboard Projection（只读、默认脱敏）
         |
         v
   心潮动态状态机 ------> state.json
@@ -62,6 +65,14 @@ Context Envelope 负责传输短期状态，不负责保存或压缩稳定核心
 - `OmbreClient`：可选的 Ombre-compatible Streamable HTTP Memory MCP。
 - `BarkClient`：可选手机通知。
 - `OAuthProvider`：远程 MCP 的 OAuth 2.1、PKCE 与动态客户端注册。
+- `DashboardAuth`：独立访问口令换取同源 HttpOnly 只读会话。
+- `Wake Bridge Protocol`：独立的用户/AI 主动交付信封，不绑定具体推送供应商。
+
+## 可视化边界
+
+Dashboard 不读取或返回原始 state，而是通过固定投影生成前端 DTO。投影默认只含十二维数值、运行时间、结构化念头信号、梦境元数据与能力开关；思绪正文和梦境文字不会因做了 UI 就自动暴露。
+
+浏览器只访问 `/dashboard/api/*`，凭 HttpOnly Cookie 鉴权。服务器/CLI 可用已有 Bearer 访问 `/v1/dashboard/*`。两条路径返回同一投影，但浏览器从不持有 `SERVICE_TOKEN`。
 
 所有适配器默认关闭。适配器失败不会替代核心状态机。
 

@@ -41,6 +41,7 @@ test('POST /v1/handoff-note stores a bounded idempotent note for HTTP clients', 
   const directory = await mkdtemp(join(tmpdir(), 'xinchao-http-api-'));
   const port = await freePort();
   const token = 'http-api-test-token';
+  const dashboardToken = 'dashboard-http-test-token-32-characters';
   const baseUrl = `http://127.0.0.1:${port}`;
   const output = { value: '' };
   const child = spawn(process.execPath, [serverPath], {
@@ -61,6 +62,9 @@ test('POST /v1/handoff-note stores a bounded idempotent note for HTTP clients', 
       CONTEXT_OMBRE_ENABLED: 'false',
       MCP_ENABLED: 'false',
       OAUTH_ENABLED: 'false',
+      DASHBOARD_ENABLED: 'true',
+      DASHBOARD_ACCESS_TOKEN: dashboardToken,
+      DASHBOARD_PUBLIC_BASE_URL: baseUrl,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -151,4 +155,56 @@ test('POST /v1/handoff-note stores a bounded idempotent note for HTTP clients', 
   const envelope = await context.json();
   assert.ok(envelope.sections.some((section) => section.id === 'handoff_notes'));
   assert.match(envelope.additionalContext, /HTTP 客户端的近期进度/);
+
+  const dashboardUnauthorized = await fetch(`${baseUrl}/dashboard/api/snapshot`);
+  assert.equal(dashboardUnauthorized.status, 401);
+
+  const badLogin = await fetch(`${baseUrl}/dashboard/session`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ access_token: 'wrong' }),
+  });
+  assert.equal(badLogin.status, 401);
+
+  const login = await fetch(`${baseUrl}/dashboard/session`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ access_token: dashboardToken }),
+  });
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get('set-cookie');
+  assert.match(cookie, /xinchao_dashboard=/);
+  assert.match(cookie, /HttpOnly/);
+
+  const dashboardSnapshot = await fetch(`${baseUrl}/dashboard/api/snapshot`, {
+    headers: { cookie },
+  });
+  assert.equal(dashboardSnapshot.status, 200);
+  const snapshot = await dashboardSnapshot.json();
+  assert.equal(snapshot.system, 'xinchao-dynamic-mind');
+  assert.equal(snapshot.drives.length, 12);
+  assert.equal(snapshot.capabilities.privateDreamText, false);
+  assert.doesNotMatch(JSON.stringify(snapshot), /HTTP 客户端的近期进度/);
+
+  const serviceSnapshot = await fetch(`${baseUrl}/v1/dashboard/snapshot`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(serviceSnapshot.status, 200);
+
+  const timeline = await fetch(`${baseUrl}/dashboard/api/timeline?limit=10`, {
+    headers: { cookie },
+  });
+  assert.equal(timeline.status, 200);
+  const timelineResult = await timeline.json();
+  assert.ok(timelineResult.items.some((item) => item.type === 'handoff_note'));
+  assert.doesNotMatch(JSON.stringify(timelineResult), /HTTP 客户端的近期进度/);
+
+  const manifest = await fetch(`${baseUrl}/dashboard/api/connect`, {
+    headers: { cookie },
+  });
+  assert.equal(manifest.status, 200);
+  const manifestResult = await manifest.json();
+  assert.equal(manifestResult.profiles.find((item) => item.id === 'web-dashboard').enabled, true);
+  assert.doesNotMatch(JSON.stringify(manifestResult), new RegExp(token));
+  assert.doesNotMatch(JSON.stringify(manifestResult), new RegExp(dashboardToken));
 });

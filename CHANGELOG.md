@@ -2,6 +2,23 @@
 
 本项目遵循语义化版本。除非特别说明，所有外部模型、长期记忆、OAuth 与通知能力均保持默认关闭。
 
+## Unreleased
+
+### 可视化与多端接入地基
+
+- 新增默认脱敏、固定结构的 Dashboard Snapshot，十二维花瓣、梦境星云和桌面/手机 UI 可共用同一数据契约。
+- 新增只读取结构化 Transition Journal 的时间线接口，支持 limit、type 和 since 过滤，不返回聊天、梦境或 handoff 正文。
+- 新增多终端接入清单，区分网页 Session、远程 MCP OAuth、远程 MCP Bearer 与服务端 HTTP Bearer，清单本身不含凭据。
+- 新增独立 Dashboard 访问口令换取 HttpOnly、SameSite 只读会话；默认关闭并要求使用不同于 `SERVICE_TOKEN` 的 32 位以上口令。
+- 梦境摘要与余韵文字默认不进入 Dashboard，只有自托管者显式设置 `DASHBOARD_INCLUDE_PRIVATE_TEXT=true` 才展示。
+- 新增独立 `packages/wake-bridge` 协议包，定义梦境余韵、思念内容、自主行动结果及 `pending_from_me` 的用户/AI 双通道信封与消费状态。
+
+### 安全与测试
+
+- Dashboard 登录增加基础失败次数限制；会话只保存在进程内存，不写入 state 或日志。
+- Wake Bridge 拒绝 Authorization、Cookie、服务 Token、原始 prompt 和原始聊天字段，并限制 payload 大小。
+- 新增 Dashboard 投影、会话、接入清单、Journal 查询及 Wake Bridge 隐私回归测试。
+
 ## 2.3.3 — 2026-07-31
 
 ### 外部记忆兼容

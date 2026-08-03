@@ -13,6 +13,8 @@ import { TransitionJournal } from './transition-journal.js';
 import { handleMcpMessage } from './mcp-protocol.js';
 import { OAuthProvider } from './oauth-provider.js';
 import { recordHandoffNote } from './handoff-notes.js';
+import { DashboardAuth } from './dashboard-auth.js';
+import { buildConnectionManifest, buildDashboardSnapshot } from './dashboard-projection.js';
 
 const config = validateConfig(loadConfig());
 if (!config.serviceToken) throw new Error('SERVICE_TOKEN is required');
@@ -23,8 +25,14 @@ const ombre = new OmbreClient(config.ombre);
 const bark = new BarkClient(config.bark);
 const journal = new TransitionJournal(config.journalPath);
 const oauth = new OAuthProvider(config.oauth, (event, fields = {}) => log(event, fields));
+const dashboardAuth = new DashboardAuth({
+  ...config.dashboard,
+  ttlSeconds: config.dashboard.sessionTtlSeconds,
+  secureCookies: config.dashboard.publicBaseUrl.startsWith('https://'),
+});
 await oauth.init();
 let cyclePromise = null;
+const SYSTEM_VERSION = '2.3.3';
 
 function log(event, fields = {}) {
   console.log(JSON.stringify({ at: new Date().toISOString(), event, ...fields }));
@@ -330,9 +338,40 @@ async function body(request) {
   return raw ? JSON.parse(raw) : {};
 }
 
-function send(response, status, value) {
-  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+function send(response, status, value, extraHeaders = {}) {
+  response.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    ...extraHeaders,
+  });
   response.end(JSON.stringify(value));
+}
+
+function dashboardTimelineOptions(url) {
+  const types = url.searchParams.getAll('type')
+    .flatMap((value) => value.split(','))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return {
+    limit: url.searchParams.get('limit') ?? 50,
+    since: url.searchParams.get('since') ?? '',
+    types,
+  };
+}
+
+async function dashboardPayload(pathname, url) {
+  if (pathname.endsWith('/snapshot')) {
+    return buildDashboardSnapshot(await store.read(), config, new Date());
+  }
+  if (pathname.endsWith('/timeline')) {
+    return {
+      schemaVersion: 1,
+      generatedAt: new Date().toISOString(),
+      items: await journal.list(dashboardTimelineOptions(url)),
+    };
+  }
+  if (pathname.endsWith('/connect')) return buildConnectionManifest(config);
+  return null;
 }
 
 function sendMcp(response, status, value, extraHeaders = {}) {
@@ -499,10 +538,41 @@ const server = createServer(async (request, response) => {
         ok: true,
         system: 'xinchao-dynamic-mind',
         mode: config.shadowMode ? 'shadow' : 'active',
-        version: '2.3.2',
+        version: SYSTEM_VERSION,
       });
     }
     if (await oauth.handle(request, response, url)) return;
+    if (url.pathname === '/dashboard/session') {
+      if (!config.dashboard.enabled) return send(response, 404, { error: 'not found' });
+      if (request.method !== 'POST') return send(response, 405, { error: 'method not allowed' }, { Allow: 'POST' });
+      const remoteAddress = request.socket.remoteAddress ?? 'unknown';
+      if (dashboardAuth.rateLimited(remoteAddress)) {
+        return send(response, 429, { error: 'too many attempts' }, { 'Retry-After': '60' });
+      }
+      const payload = await body(request);
+      const supplied = payload.accessToken ?? payload.access_token ?? payload.token ?? '';
+      if (!dashboardAuth.verifyAccessToken(supplied, remoteAddress)) {
+        return send(response, 401, { error: 'invalid credentials' });
+      }
+      const session = dashboardAuth.createSession();
+      log('dashboard_session_created', { sessionExpiresAt: session.expiresAt });
+      return send(response, 200, {
+        ok: true,
+        expiresAt: session.expiresAt,
+        profile: 'read-only-dashboard',
+      }, { 'Set-Cookie': dashboardAuth.sessionCookie(session.token) });
+    }
+    if (url.pathname === '/dashboard/logout') {
+      if (request.method !== 'POST') return send(response, 405, { error: 'method not allowed' }, { Allow: 'POST' });
+      dashboardAuth.destroyRequestSession(request);
+      return send(response, 200, { ok: true }, { 'Set-Cookie': dashboardAuth.clearCookie() });
+    }
+    if (url.pathname.startsWith('/dashboard/api/')) {
+      if (!dashboardAuth.validateRequest(request)) return send(response, 401, { error: 'unauthorized' });
+      if (request.method !== 'GET') return send(response, 405, { error: 'method not allowed' }, { Allow: 'GET' });
+      const payload = await dashboardPayload(url.pathname, url);
+      return payload ? send(response, 200, payload) : send(response, 404, { error: 'not found' });
+    }
     if (config.mcp.enabled && mcpPath(url)) {
       if (!mcpAuthorized(request, url)) {
         if (oauth.enabled) response.setHeader('WWW-Authenticate', oauth.wwwAuthenticate());
@@ -554,6 +624,11 @@ const server = createServer(async (request, response) => {
       });
     }
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
+
+    if (request.method === 'GET' && url.pathname.startsWith('/v1/dashboard/')) {
+      const payload = await dashboardPayload(url.pathname, url);
+      return payload ? send(response, 200, payload) : send(response, 404, { error: 'not found' });
+    }
 
     if (request.method === 'GET' && url.pathname === '/v1/state') {
       return send(response, 200, await store.read());

@@ -1,4 +1,4 @@
-# 心潮动态心智系统 2.3.2
+# 心潮动态心智系统 2.3.3
 
 ![心潮动态心智系统](docs/cover.png)
 
@@ -6,7 +6,7 @@
 
 > 心潮模拟可解释的动态状态，不宣称产生意识、情感或生命。核心状态机可离线运行；模型、长期记忆、OAuth 和通知均为可选适配器。
 
-## 2.3.2 更新重点
+## 2.3.x 更新重点
 
 - **HTTP 便签闭环**：补齐 `POST /v1/handoff-note`，HTTP 前端与 MCP 客户端现在使用同一套有界、幂等的短期交接。
 - **在场时间修复**：heartbeat 和真实 `xinchao_event` 都会刷新 `lastHeartbeatAt`，避免在线时被自主推送误判为长期离线。
@@ -20,6 +20,18 @@
 - **2200 tokens 默认预算**：用于短期状态和近期连续性；稳定核心资料仍由客户端单独完整读取。
 
 完整差异见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 可视化接入地基（开发中）
+
+当前仓库已经把 UI 与状态机拆开，并提供：
+
+- 默认脱敏的十二维 Dashboard Snapshot；
+- 不含正文的结构化潮汐时间线；
+- 面向网页 AI、本地 Agent、手机网页与自建后端的接入清单；
+- 独立 Dashboard 口令换取 HttpOnly 只读会话，浏览器无需接触 `SERVICE_TOKEN`；
+- 独立 [`Wake Bridge`](packages/wake-bridge/) 消息信封协议，为梦境余韵、思念内容和自主行动结果预留用户/AI 双通道。
+
+接口、环境变量和前端示例见 [可视化与多终端接入地基](docs/DASHBOARD-INTEGRATION.md)。视觉主题、花瓣与梦境星云可以独立迭代，不需要重写服务端。
 
 ## 支持哪些终端
 
@@ -122,6 +134,9 @@ Authorization: Bearer <SERVICE_TOKEN>
 | `POST` | `/v1/heartbeat` | 只刷新在场时间，不上传聊天正文 |
 | `POST` | `/v1/handoff-note` | 保存短期交接摘要 |
 | `POST` | `/v1/drive-feedback` | 管理端受控反馈接口 |
+| `GET` | `/v1/dashboard/snapshot` | 默认脱敏的可视化状态投影 |
+| `GET` | `/v1/dashboard/timeline` | 结构化变化时间线（无正文） |
+| `GET` | `/v1/dashboard/connect` | 多端接入能力清单（无凭据） |
 | `POST` | `/mcp` | Streamable HTTP MCP |
 
 ## 心跳接入档位
@@ -189,6 +204,8 @@ CONTEXT_OMBRE_ENABLED=false
 - `SERVICE_TOKEN`、`MCP_PATH_TOKEN` 与 `OAUTH_APPROVAL_TOKEN` 必须彼此独立。
 - 服务默认绑定回环地址、使用只读容器、移除 Linux capabilities。
 - Context audit 只记录摘要与交付元数据。
+- Dashboard 使用与服务密钥不同的访问口令，并只签发 HttpOnly、SameSite 会话 Cookie。
+- Dashboard 默认隐藏梦境摘要和余韵文字；需要由自托管者显式开启。
 - `xinchao_event` 不接受聊天正文；交接便签也只应保存脱水后的近期进度。
 - 公开部署前请阅读 [SECURITY.md](SECURITY.md)。
 
@@ -203,10 +220,11 @@ npm test
 ## 项目结构
 
 ```text
-src/             状态机、MCP、OAuth 与可选适配器
+src/             状态机、MCP、OAuth、Dashboard 投影与可选适配器
 test/            Node.js 原生测试
 configs/         可替换提示词
 scripts/         本地配置、部署与烟雾测试
+packages/        可独立使用的 Wake Bridge 消息协议
 state/           运行状态挂载目录（不提交真实数据）
 memory-data/     可选外部心跳挂载目录
 ```

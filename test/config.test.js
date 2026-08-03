@@ -5,6 +5,7 @@ import { validateConfig } from '../src/config.js';
 
 function config(overrides = {}) {
   return {
+    serviceToken: 'service-secret',
     ombre: {
       url: '',
       token: '',
@@ -15,6 +16,12 @@ function config(overrides = {}) {
     context: {
       ombreEnabled: false,
       ...(overrides.context || {}),
+    },
+    dashboard: {
+      enabled: false,
+      accessToken: '',
+      publicBaseUrl: 'https://xinchao.example.com',
+      ...(overrides.dashboard || {}),
     },
   };
 }
@@ -59,4 +66,45 @@ test('authenticated external memory configuration is accepted', () => {
     },
   });
   assert.equal(validateConfig(value), value);
+});
+
+test('Dashboard requires a separate strong access token', () => {
+  assert.throws(
+    () => validateConfig(config({ dashboard: { enabled: true, accessToken: 'short' } })),
+    /at least 32 characters/,
+  );
+  assert.throws(
+    () => validateConfig(config({ dashboard: { enabled: true, accessToken: 'service-secret' } })),
+    /at least 32 characters/,
+  );
+  const shared = 'a'.repeat(32);
+  const sameSecret = config({ dashboard: { enabled: true, accessToken: shared } });
+  sameSecret.serviceToken = shared;
+  assert.throws(() => validateConfig(sameSecret), /different from SERVICE_TOKEN/);
+  assert.equal(
+    validateConfig(config({ dashboard: { enabled: true, accessToken: 'd'.repeat(32) } })).dashboard.enabled,
+    true,
+  );
+});
+
+test('public Dashboard requires an HTTPS base URL', () => {
+  const accessToken = 'd'.repeat(32);
+  assert.throws(
+    () => validateConfig(config({
+      dashboard: { enabled: true, accessToken, publicBaseUrl: '' },
+    })),
+    /DASHBOARD_PUBLIC_BASE_URL is required/,
+  );
+  assert.throws(
+    () => validateConfig(config({
+      dashboard: { enabled: true, accessToken, publicBaseUrl: 'http://public.example.com' },
+    })),
+    /must use HTTPS/,
+  );
+  assert.equal(
+    validateConfig(config({
+      dashboard: { enabled: true, accessToken, publicBaseUrl: 'http://127.0.0.1:18110' },
+    })).dashboard.enabled,
+    true,
+  );
 });

@@ -187,4 +187,39 @@ export class TransitionJournal {
     this.#queue = operation.catch(() => {});
     return operation;
   }
+
+  async list({ limit = 50, since = '', types = [], maxBytes = 512 * 1024 } = {}) {
+    const boundedLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+    const boundedBytes = Math.max(16 * 1024, Math.min(2 * 1024 * 1024, Number(maxBytes) || 512 * 1024));
+    const sinceTimestamp = Date.parse(since ?? '');
+    const allowedTypes = new Set((Array.isArray(types) ? types : [types])
+      .map((value) => compactString(value, 80))
+      .filter(Boolean));
+    let handle;
+    try {
+      handle = await open(this.path, 'r');
+      const info = await handle.stat();
+      const size = Math.min(info.size, boundedBytes);
+      if (!size) return [];
+      const buffer = Buffer.alloc(size);
+      await handle.read(buffer, 0, size, info.size - size);
+      let text = buffer.toString('utf8');
+      if (info.size > size) text = text.slice(text.indexOf('\n') + 1);
+      return text.split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          try { return JSON.parse(line); }
+          catch { return null; }
+        })
+        .filter((record) => record && (!allowedTypes.size || allowedTypes.has(record.type)))
+        .filter((record) => !Number.isFinite(sinceTimestamp) || Date.parse(record.at ?? '') >= sinceTimestamp)
+        .slice(-boundedLimit)
+        .reverse();
+    } catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    } finally {
+      await handle?.close();
+    }
+  }
 }

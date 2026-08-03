@@ -66,6 +66,14 @@ export function loadConfig() {
       accessTtlSeconds: number('OAUTH_ACCESS_TTL_SECONDS', 86400, 300, 2592000),
       refreshTtlSeconds: number('OAUTH_REFRESH_TTL_SECONDS', 31536000, 86400, 63072000),
     },
+    dashboard: {
+      enabled: bool('DASHBOARD_ENABLED', false),
+      publicBaseUrl: (process.env.DASHBOARD_PUBLIC_BASE_URL ?? process.env.OAUTH_PUBLIC_BASE_URL ?? '').replace(/\/$/, ''),
+      accessToken: process.env.DASHBOARD_ACCESS_TOKEN ?? '',
+      sessionTtlSeconds: number('DASHBOARD_SESSION_TTL_SECONDS', 43200, 900, 604800),
+      includePrivateText: bool('DASHBOARD_INCLUDE_PRIVATE_TEXT', false),
+      dreamLimit: number('DASHBOARD_DREAM_LIMIT', 12, 1, 30),
+    },
     interaction: {
       maxEffectsPerDay: number('INTERACTION_MAX_EFFECTS_PER_DAY', 24, 1, 96),
       timeZone: process.env.INTERACTION_TIME_ZONE ?? process.env.SETTLE_TIME_ZONE ?? 'Asia/Shanghai',
@@ -114,16 +122,37 @@ export function validateConfig(config) {
     || config.ombre.writeEnabled
     || config.context.ombreEnabled
   );
-  if (!externalMemoryEnabled) return config;
-  if (!String(config.ombre.url || '').trim()) {
-    throw new Error(
-      'OMBRE_MCP_URL is required when external memory integration is enabled'
-    );
+  if (externalMemoryEnabled) {
+    if (!String(config.ombre.url || '').trim()) {
+      throw new Error(
+        'OMBRE_MCP_URL is required when external memory integration is enabled'
+      );
+    }
+    if (!String(config.ombre.token || '').trim()) {
+      throw new Error(
+        'OMBRE_MCP_TOKEN is required when external memory integration is enabled'
+      );
+    }
   }
-  if (!String(config.ombre.token || '').trim()) {
-    throw new Error(
-      'OMBRE_MCP_TOKEN is required when external memory integration is enabled'
-    );
+  if (config.dashboard?.enabled) {
+    const accessToken = String(config.dashboard.accessToken || '');
+    if (accessToken.length < 32) {
+      throw new Error('DASHBOARD_ACCESS_TOKEN must contain at least 32 characters when Dashboard is enabled');
+    }
+    if (accessToken === String(config.serviceToken || '')) {
+      throw new Error('DASHBOARD_ACCESS_TOKEN must be different from SERVICE_TOKEN');
+    }
+    const publicBaseUrl = String(config.dashboard.publicBaseUrl || '');
+    if (!publicBaseUrl) {
+      throw new Error('DASHBOARD_PUBLIC_BASE_URL is required when Dashboard is enabled');
+    }
+    let parsed;
+    try { parsed = new URL(publicBaseUrl); }
+    catch { throw new Error('DASHBOARD_PUBLIC_BASE_URL must be a valid URL'); }
+    const local = ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
+    if (parsed.protocol !== 'https:' && !(local && parsed.protocol === 'http:')) {
+      throw new Error('DASHBOARD_PUBLIC_BASE_URL must use HTTPS outside localhost');
+    }
   }
   return config;
 }
