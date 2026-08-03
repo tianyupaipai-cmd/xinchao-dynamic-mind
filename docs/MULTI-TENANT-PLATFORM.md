@@ -164,7 +164,7 @@ V1 不做：
 
 ### 本地 Runtime Bridge
 
-自建前端、Claude Code、Codex、Cyberboss 等能够接受后台消息的环境，使用一个与平台和心潮核心都解耦的本地 Runtime Bridge。其边界参考 [Galatea Garden Wake Bridge](https://github.com/WenXiaoWendy/galatea-garden-wake-bridge)：传输层不猜测线程、不直接修改运行时文件，只调用用户为目标 Runtime 配置的 Adapter。
+自建前端、Claude Code、Codex、Cyberboss 等能够接受后台消息的环境，使用一个与平台和心潮核心都解耦、单独开源的本地 Runtime Bridge。其边界参考 [Galatea Garden Wake Bridge](https://github.com/WenXiaoWendy/galatea-garden-wake-bridge)：传输层不猜测线程、不直接修改运行时文件，只调用用户为目标 Runtime 配置的 Adapter。
 
 ```text
 心潮平台的耐久投递队列
@@ -205,6 +205,14 @@ V1 不做：
 - `aggregate`：短时间内多次同类轻互动可以汇总成一封自然语言信封。
 
 任何 Adapter 都要做“同分支验证”：投递后在目标会话继续一轮，确认上一条消息真的成为该会话上下文。只看到子进程退出码、数据库记录或稍后出现的历史，不足以证明官方窗口已经实时收到。
+
+心潮网页不承载 Bridge 运行代码，只展示：
+
+- 独立开源仓库与下载/安装入口；
+- 当前 AI 连接支持的能力，例如后台唤醒、下次连接补投或仅通知用户；
+- Bridge 在线状态、最近心跳和待投递数量；
+- “关闭官方窗口后可能无法立即注入”的明确提示；
+- Token 创建、撤销和轮换入口，Token 只展示一次且不进入 URL。
 
 ## 多租户数据模型
 
@@ -427,6 +435,10 @@ xinchao-dynamic-mind（公开核心）
 xinchao-platform（独立项目）
   账号、小屋、多租户数据库、Session、租户 OAuth、任务队列、
   SSE、公开范围、配额、运营与前端
+
+xinchao-runtime-bridge（独立开源工具）
+  机器鉴权、SSE 通知、一次性内容拉取、stdin Injector 信封、
+  Runtime Adapter 边界、投递 ACK；网页只链接和显示状态
 ```
 
 平台通过一个 `MindRepository` 接口调用核心，不把用户系统写进 `engine.js`：
