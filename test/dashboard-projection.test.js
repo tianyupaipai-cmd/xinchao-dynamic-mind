@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { newState } from '../src/engine.js';
 import { buildConnectionManifest, buildDashboardSnapshot } from '../src/dashboard-projection.js';
+import { DRIVE_KEYS } from '../src/dimensions.js';
 
 function config(overrides = {}) {
   return {
@@ -46,7 +47,9 @@ test('dashboard snapshot is stable and private by default', () => {
   const raw = JSON.stringify(snapshot);
 
   assert.equal(snapshot.schemaVersion, 1);
-  assert.equal(snapshot.drives.length, 12);
+  // 断言跟着维度表走，不写死 12 —— 否则给 dimensions.js 加一维就会红，
+  // 而那恰恰是这套设计允许发生的事。
+  assert.equal(snapshot.drives.length, DRIVE_KEYS.length);
   assert.equal(snapshot.topDrives[0].key, 'possess');
   assert.equal(snapshot.topDrives[0].level, 'surging');
   assert.equal(snapshot.thoughts.flashCount, 1);

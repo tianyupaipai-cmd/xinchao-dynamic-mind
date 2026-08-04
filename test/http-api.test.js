@@ -6,6 +6,9 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// 断言跟着维度表走，不写死 12 —— 给 dimensions.js 加一维不该让测试变红。
+import { DRIVE_KEYS } from '../src/dimensions.js';
 import test from 'node:test';
 
 const projectDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -186,7 +189,7 @@ test('POST /v1/handoff-note stores a bounded idempotent note for HTTP clients', 
   assert.equal(dashboardSnapshot.status, 200);
   const snapshot = await dashboardSnapshot.json();
   assert.equal(snapshot.system, 'xinchao-dynamic-mind');
-  assert.equal(snapshot.drives.length, 12);
+  assert.equal(snapshot.drives.length, DRIVE_KEYS.length);
   assert.equal(snapshot.capabilities.privateDreamText, false);
   assert.doesNotMatch(JSON.stringify(snapshot), /HTTP 客户端的近期进度/);
 
