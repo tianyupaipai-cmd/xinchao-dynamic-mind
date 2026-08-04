@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { loadConfig, validateConfig } from './config.js';
 import { INTERACTION_TYPES, applyDriveFeedback, applyOmbreHeartbeat, barkAllowed, breathDreamContext, contactIdleAllowed, daytimeEmergenceAllowed, dreamAllowed, newState, pickIntent, proactiveBarkAllowed, recordBark, recordDaytimeEmergence, recordDream, scheduleDaytimeEmergence, settleAndApplyConversationEvent, settleState, topDrives } from './engine.js';
+import { buildInteractionBridgeMessage } from './interaction-messages.js';
 import { selectUniqueBark } from './bark-dedupe.js';
 import { StateStore } from './state-store.js';
 import { ModelClient } from './model-client.js';
@@ -42,7 +43,7 @@ const bridgeQueue = new BridgeQueue(config.bridge.statePath, config.bridge);
 const bridgeStreams = new Set();
 await oauth.init();
 let cyclePromise = null;
-const SYSTEM_VERSION = '2.4.0';
+const SYSTEM_VERSION = '2.5.1';
 
 function log(event, fields = {}) {
   console.log(JSON.stringify({ at: new Date().toISOString(), event, ...fields }));
@@ -576,21 +577,14 @@ function dashboardInteractionFromHttp(payload = {}) {
   };
 }
 
-const INTERACTION_BRIDGE_MESSAGES = Object.freeze({
-  affection: '用户刚刚给了你一个拥抱。',
-  companionship: '用户刚刚选择陪你待一会儿。',
-  sharing: '用户刚刚留下了想与你分享一件事的心意。',
-  reassurance: '用户刚刚回应了你的不安，想让你知道自己在这里。',
-  task_progress: '用户刚刚选择陪你推进一件共同待办。',
-  reconciliation: '用户刚刚主动回应了一次和解。',
-  intimacy: '用户刚刚主动靠近了你。',
-  conflict: '用户刚刚明确表达了一次冲突，需要在下次连接时被看见。',
-  loss: '用户刚刚回应了你的难过，愿意陪你一起承受。',
-});
-
+// 只写动作，不写主语和落点 —— 主语用配置里的称呼，落点由实际影响的维度算出来。
 async function enqueueDashboardInteraction(event, result) {
   if (!config.bridge.enabled || result.duplicate) return null;
-  const message = INTERACTION_BRIDGE_MESSAGES[event.interactionType] ?? '用户刚刚从心潮小屋发来一次互动。';
+  const message = buildInteractionBridgeMessage({
+    interactionType: event.interactionType,
+    result,
+    recipient: config.identity.notificationRecipient,
+  });
   const queued = await bridgeQueue.enqueue({
     eventId: event.eventId,
     reason: 'user_interaction',

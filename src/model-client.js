@@ -4,7 +4,7 @@ export class ModelClient {
   constructor(config) {
     this.config = config;
     this.agentName = String(config.agentName ?? 'AI 助手').trim() || 'AI 助手';
-    this.notificationRecipient = String(config.notificationRecipient ?? '用户').trim() || '用户';
+    this.notificationRecipient = String(config.notificationRecipient ?? '你的人类').trim() || '你的人类';
     this.dreamPushPrompt = loadPrompt(
       config.dreamPushPromptPath,
       defaultDreamPushPrompt(this.agentName, this.notificationRecipient),

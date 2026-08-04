@@ -11,7 +11,9 @@ function number(name, fallback, min, max) {
 
 export function loadConfig() {
   const agentName = process.env.AGENT_NAME ?? 'AI 助手';
-  const notificationRecipient = process.env.NOTIFICATION_RECIPIENT ?? '用户';
+  // 默认值会直接出现在推送和桥消息里被本人读到，所以不用「用户」这种后台称呼。
+  // 自己部署的人应该设成对方真正的名字，这只是没设时的兜底。
+  const notificationRecipient = process.env.NOTIFICATION_RECIPIENT ?? '你的人类';
   return {
     identity: { agentName, notificationRecipient },
     port: number('PORT', 18110, 1, 65535),

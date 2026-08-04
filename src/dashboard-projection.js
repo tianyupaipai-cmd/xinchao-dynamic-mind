@@ -102,7 +102,7 @@ export function buildDashboardSnapshot(state = {}, config = {}, now = new Date()
     revision: Number(state.revision ?? 0),
     identity: {
       agentName: compact(config.identity?.agentName, 80) || '心潮',
-      recipient: compact(config.identity?.notificationRecipient, 80) || '用户',
+      recipient: compact(config.identity?.notificationRecipient, 80) || '你的人类',
     },
     runtime: {
       mode: config.shadowMode ? 'shadow' : 'active',
