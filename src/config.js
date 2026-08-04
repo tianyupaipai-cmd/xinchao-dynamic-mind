@@ -75,6 +75,11 @@ export function loadConfig() {
       sessionTtlSeconds: number('DASHBOARD_SESSION_TTL_SECONDS', 43200, 900, 604800),
       includePrivateText: bool('DASHBOARD_INCLUDE_PRIVATE_TEXT', false),
       dreamLimit: number('DASHBOARD_DREAM_LIMIT', 12, 1, 30),
+      // 允许哪些网页来源直接从浏览器读这台心潮（逗号分隔的完整来源）。
+      // 默认空 = 不放行任何跨源请求，行为与以前完全一致。
+      // 只有心潮和浏览器在同一台机器、又想用别人的网页前端时才需要设。
+      allowedOrigins: String(process.env.DASHBOARD_ALLOWED_ORIGINS ?? '')
+        .split(',').map((value) => value.trim().replace(/\/$/, '')).filter(Boolean),
     },
     interaction: {
       maxEffectsPerDay: number('INTERACTION_MAX_EFFECTS_PER_DAY', 24, 1, 96),

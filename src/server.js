@@ -43,7 +43,7 @@ const bridgeQueue = new BridgeQueue(config.bridge.statePath, config.bridge);
 const bridgeStreams = new Set();
 await oauth.init();
 let cyclePromise = null;
-const SYSTEM_VERSION = '2.5.1';
+const SYSTEM_VERSION = '2.6.0';
 
 function log(event, fields = {}) {
   console.log(JSON.stringify({ at: new Date().toISOString(), event, ...fields }));
@@ -379,6 +379,32 @@ async function body(request) {
   return raw ? JSON.parse(raw) : {};
 }
 
+/**
+ * 浏览器直连模式的跨源放行。
+ *
+ * 心潮和浏览器在同一台机器上时（自己电脑、或手机 Termux），网页前端可以
+ * 不经过任何中间服务器直接读这台心潮 —— 数据一步都不出本机。
+ *
+ * 默认不放行任何来源：只有部署方把来源写进 DASHBOARD_ALLOWED_ORIGINS 才生效，
+ * 不填时行为与以前逐字节相同。
+ *
+ * 刻意不发 Access-Control-Allow-Credentials：直连用 Authorization 头鉴权，
+ * 不需要跨源 Cookie，也就不给 Cookie 留任何口子。
+ */
+function applyDashboardCors(request, response, url) {
+  if (!url.pathname.startsWith('/dashboard/')) return false;
+  const origin = String(request.headers.origin ?? '').replace(/\/$/, '');
+  if (!origin) return false;
+  // 无论放不放行都要声明 Vary，否则中间缓存可能把一个来源的响应喂给另一个。
+  response.setHeader('Vary', 'Origin');
+  if (!config.dashboard.allowedOrigins.includes(origin)) return false;
+  response.setHeader('Access-Control-Allow-Origin', origin);
+  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  response.setHeader('Access-Control-Max-Age', '600');
+  return true;
+}
+
 function send(response, status, value, extraHeaders = {}) {
   response.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -619,6 +645,11 @@ function handoffNoteFromHttp(payload = {}) {
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, 'http://localhost');
+    const corsAllowed = applyDashboardCors(request, response, url);
+    if (request.method === 'OPTIONS' && url.pathname.startsWith('/dashboard/')) {
+      response.writeHead(corsAllowed ? 204 : 403).end();
+      return;
+    }
     if (request.method === 'GET' && url.pathname === '/health') {
       return send(response, 200, {
         ok: true,
@@ -682,12 +713,18 @@ const server = createServer(async (request, response) => {
         return send(response, 401, { error: 'invalid credentials' });
       }
       const session = dashboardAuth.createSession();
-      log('dashboard_session_created', { sessionExpiresAt: session.expiresAt });
-      return send(response, 200, {
+      // 浏览器直连拿不到 HttpOnly Cookie，只能把 token 交到 JS 手里。
+      // 这是实打实的降级，所以必须由调用方显式要求，不能因为「顺手也返回」
+      // 而让同源前端意外持有 token —— 同源那条路的价值就是浏览器从不碰它。
+      const headerMode = String(payload.mode ?? '').toLowerCase() === 'header';
+      log('dashboard_session_created', { sessionExpiresAt: session.expiresAt, headerMode });
+      const responseBody = {
         ok: true,
         expiresAt: session.expiresAt,
         profile: 'read-only-dashboard',
-      }, { 'Set-Cookie': dashboardAuth.sessionCookie(session.token) });
+      };
+      if (headerMode) return send(response, 200, { ...responseBody, token: session.token });
+      return send(response, 200, responseBody, { 'Set-Cookie': dashboardAuth.sessionCookie(session.token) });
     }
     if (url.pathname === '/dashboard/logout') {
       if (request.method !== 'POST') return send(response, 405, { error: 'method not allowed' }, { Allow: 'POST' });

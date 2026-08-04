@@ -206,6 +206,35 @@ Claude Code 可使用仓库中的 [`scripts/xinchao-heartbeat-hook.sh`](scripts/
 
 token 文件应放在仓库外并设为 `0600`；私有设置不要提交。均衡档将最小间隔改成 `120` 或 `300`。
 
+## 浏览器直连（没有公网地址时）
+
+网页前端默认由**服务端**代访问你的心潮，所以你的心潮必须有一个公网 HTTPS
+地址。如果你的心潮跑在自己电脑或手机上，别人的服务器永远到不了你的
+`127.0.0.1` —— 这不是配置问题，是做不到。
+
+如果**浏览器和心潮在同一台机器上**，可以改为让浏览器直接读，不经过任何
+中间服务器：
+
+```env
+DASHBOARD_ENABLED=true
+DASHBOARD_ACCESS_TOKEN=
+DASHBOARD_ALLOWED_ORIGINS=https://前端地址
+```
+
+- 默认为空 = 不放行任何跨源请求。不填时行为与不支持直连时完全一致。
+- 只填你自己确实要用的前端地址，逗号分隔多个。
+- 前端用 `POST /dashboard/session` 带 `{"mode":"header"}` 换一个只读会话
+  token，之后所有请求用 `Authorization: Bearer <token>`。
+
+**限制**：
+
+- 只在浏览器与心潮同机时有效。同一局域网的另一台设备**不行** —— 内网 IP
+  不是浏览器认可的可信来源，会被混合内容拦截。
+- Safari 对 `http://localhost` 的策略比 Chrome/Firefox 严，可能仍被拦。
+- 直连模式下会话 token 由浏览器持有，比同源的 HttpOnly Cookie 弱；
+  换来的是数据不经过第三方服务器。**任何情况下都不要把 `SERVICE_TOKEN`
+  交给前端**，它能读原始状态和完整 MCP。
+
 ## 长期记忆边界
 
 长期记忆不是心潮的必需组件。启用外部记忆时：
