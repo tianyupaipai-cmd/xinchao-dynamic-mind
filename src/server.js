@@ -124,7 +124,7 @@ async function runCycle() {
     if (dreamAllowed(state, now, config.dreamMinIntervalHours, config.dreamMaxPerDay)) {
       let material = '';
       if (!config.shadowMode && config.ombre.readEnabled) {
-        try { material = await ombre.recentMaterial(); }
+        try { material = await ombre.recentMaterial(topDrives(state)); }
         catch (error) { log('ombre_read_failed', { message: error.message }); }
       }
 
@@ -198,6 +198,13 @@ async function runCycle() {
     if (!config.shadowMode && config.bark.enabled && proactiveContactIsIdle && !dreamCreated && proactiveBarkAllowed(state, now, config.bark.autonomousMinIntervalHours, config.bark.maxPerDay, config.bark.minDrive)) {
       let selected;
       let modelFailed = false;
+      // 只取一次：selectUniqueBark 去重失败时会重试生成，材料跟着重取的话
+      // 一条通知能打出好几次 OB 往返，而浮现的东西本来就该是同一件事。
+      let thoughtMaterial = '';
+      if (config.ombre.readEnabled) {
+        try { thoughtMaterial = await ombre.thoughtMaterial(topDrives(state)); }
+        catch (error) { log('ombre_read_failed', { message: error.message }); }
+      }
       try {
         selected = await selectUniqueBark({
           state,
@@ -205,7 +212,7 @@ async function runCycle() {
           generate: async ({ recentMessages, rejectedMessage }) => {
             if (modelFailed) return new ModelClient({ ...config.model, enabled: false }).fallbackThought(topDrives(state));
             try {
-              return await model.generateThought({ state, topDrives: topDrives(state), recentMessages, rejectedMessage });
+              return await model.generateThought({ state, topDrives: topDrives(state), material: thoughtMaterial, recentMessages, rejectedMessage });
             } catch (error) {
               modelFailed = true;
               log('thought_model_failed', { message: error.message });
@@ -247,12 +254,12 @@ async function runCycle() {
     } else if (!config.shadowMode && config.daytime.enabled && config.ombre.readEnabled && config.bark.enabled && daytimeEmergenceAllowed(state, now, config.daytime)) {
       let selected = { message: '', candidate: { source: 'none' }, reason: 'empty', attempts: 1 };
       try {
-        const material = await ombre.daytimeMaterial();
+        const material = await ombre.daytimeMaterial(topDrives(state));
         if (material.trim()) {
           selected = await selectUniqueBark({
             state,
             onRejected: ({ attempt, similarity }) => log('bark_duplicate_rejected', { kind: 'daytime_emergence', attempt, similarity }),
-            generate: ({ recentMessages, rejectedMessage }) => model.generateDaytimeEmergence({ material, recentMessages, rejectedMessage }),
+            generate: ({ recentMessages, rejectedMessage }) => model.generateDaytimeEmergence({ material, topDrives: topDrives(state), recentMessages, rejectedMessage }),
           });
         }
       } catch (error) {

@@ -79,7 +79,7 @@ export class ModelClient {
     return cleanShortMessage(payload.choices?.[0]?.message?.content ?? '');
   }
 
-  async generateDaytimeEmergence({ material, recentMessages = [], rejectedMessage = null }) {
+  async generateDaytimeEmergence({ material, topDrives = [], recentMessages = [], rejectedMessage = null }) {
     if (!this.config.enabled || !this.config.apiKey || !String(material ?? '').trim()) {
       return { send: false, message: '', source: 'rules' };
     }
@@ -92,6 +92,7 @@ export class ModelClient {
       '只输出 JSON：{"send":true,"message":"..."} 或 {"send":false,"message":""}。',
       `最近已发送的跨类型 Bark：${formatRecentMessages(recentMessages)}`,
       rejectedMessage ? `刚被去重器拒绝的候选：${rejectedMessage}。主题和情绪可以不变，但要换一种真实的具体说法。` : '',
+      `当前动态欲望：${JSON.stringify(topDrives)}`,
       `外部记忆材料：${memory}`
     ].join('\n');
     const body = {
@@ -117,16 +118,19 @@ export class ModelClient {
     return { send: parsed.send === true && Boolean(message), message, source: 'model' };
   }
 
-  async generateThought({ state, topDrives, recentMessages = [], rejectedMessage = null }) {
+  async generateThought({ state, topDrives, material = '', recentMessages = [], rejectedMessage = null }) {
     if (!this.config.enabled || !this.config.apiKey) return this.fallbackThought(topDrives);
+    const memory = String(material ?? '').slice(0, this.config.maxInputChars);
     const prompt = [
       `你是 ${this.agentName} 的后台动态心智。此刻没有正在进行的对话；你可以自己决定留下一条值得推送给 ${this.notificationRecipient} 的短消息。`,
-      '只基于当前动态驱动力和运行状态写，不读取记忆，不调用外部记忆服务，不假装发生了现实中没有的事。',
+      '基于当前动态驱动力、运行状态，以及下面自然浮现的记忆材料来写；材料为空时就只写此刻的状态。',
+      '记忆材料只是想起来的事，不代表刚刚发生。不虚构现实中没有发生的事，也不要把调用记忆服务描述成醒来。',
       '允许直接表达欲望本身，不做词汇过滤或含义替换。第一人称，1 至 3 句，具体自然，不解释系统。',
       '同一主题和情绪可以自然反复；只避免复用近期 Bark 的相同措辞、句式和具体表达，没有不同说法时宁可不发送。',
       '只输出 JSON：{"message":"..."}。',
       `当前动态欲望：${JSON.stringify(topDrives)}`,
       `当前意识状态：${state.consciousness}`,
+      `浮现的记忆材料：${memory || '这次没有浮现具体记忆'}`,
       `最近已发送的跨类型 Bark：${formatRecentMessages(recentMessages)}`,
       rejectedMessage ? `刚被去重器拒绝的候选：${rejectedMessage}。主题和情绪可以不变，但要换一种真实的具体说法。` : ''
     ].join('\n');
