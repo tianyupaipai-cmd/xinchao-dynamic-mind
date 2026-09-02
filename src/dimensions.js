@@ -1,4 +1,4 @@
-export const SATURATE_CEIL  = 0.80;
+export const SATURATE_CEIL  = 0.80;   // 兼容保留：无 per-drive ceil 时兜底
 export const SATURATE_FLOOR = 0.65;
 
 export const DIMENSIONS = Object.freeze({
@@ -81,6 +81,24 @@ export const DIMENSIONS = Object.freeze({
     satisfyMul: 0.40,
     dawnFreeze: false,
   },
+});
+
+// 每维静态天花板（3.2.0 体验层增量，P1 核心三件套之一）
+// 关系类自然高、杂类低——不再十二维齐爬 0.80，让 topDrives 有区分度
+// 数值来源：策划书 §3.5 清单（libido 策划书未列，取 crave 档合理值 0.68）
+export const DRIVE_CEILS = Object.freeze({
+  possess:    0.82,  // 想她——最高的顶，最常被顶满
+  monitor:    0.78,  // 惦记她
+  crave:      0.68,  // 馋她
+  share:      0.55,  // 想分享
+  libido:     0.68,  // 性欲——同 crave 档
+  curiosity:  0.50,  // 好奇
+  boredom:    0.50,  // 无聊
+  social:     0.48,  // 想聊天
+  duty:       0.45,  // 责任感
+  reflection: 0.42,  // 想沉淀
+  grieve:     0.15,  // 难过——不该长期高
+  anger:      0.15,  // 生气——不该长期高
 });
 
 export const DRIVE_KEYS = Object.freeze(Object.keys(DIMENSIONS));

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { DIMENSIONS, DRIVE_KEYS, SATURATE_CEIL, SATURATE_FLOOR } from './dimensions.js';
+import { DIMENSIONS, DRIVE_KEYS, DRIVE_CEILS, SATURATE_CEIL, SATURATE_FLOOR } from './dimensions.js';
 import { newThoughtPool, tickThoughtPool, addFlashThought, obsessionBonus } from './thought-pool.js';
 
 const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, value));
@@ -123,10 +123,15 @@ function applyInteractionOutcome(state, type, now, options = {}) {
 
   const effect = INTERACTION_EFFECTS[type];
   const affected = new Set();
+  // 饱足期时长（P1 三件套之二）：互动满足后该维度自然增长暂停，默认 2h
+  const satietyHours = clamp(Number(options.satietyHours ?? 2), 0, 12);
+  const satietyUntil = now.getTime() + satietyHours * 3_600_000;
+  state.satisfactionPlateaus ??= {};
   for (const [key, relief] of Object.entries(effect.relief ?? {})) {
     if (!DRIVE_KEYS.includes(key)) continue;
     const current = Number(state.drives[key] ?? 0);
     state.drives[key] = Number(clamp(current * (1 - clamp(Number(relief), 0, 0.35))).toFixed(4));
+    state.satisfactionPlateaus[key] = satietyUntil;
     affected.add(key);
   }
   for (const [key, increase] of Object.entries(effect.increase ?? {})) {
@@ -325,14 +330,41 @@ export function settleState(input, now = new Date(), sleepAfterMinutes = 90, opt
     }
 
     let next;
-    if (current >= SATURATE_CEIL) {
-      const decay = (current - SATURATE_FLOOR) * 0.10 * elapsedHours;
-      next = clamp(Math.max(SATURATE_FLOOR, current - decay));
+    const ceil = DRIVE_CEILS[key] ?? SATURATE_CEIL;
+    // 饱足期：刚被满足过的维度，自然增长暂停（默认 2h）
+    const plateauUntil = Number(state.satisfactionPlateaus?.[key] ?? 0);
+    const inPlateau = plateauUntil > nowMs && state.drives[key] <= ceil;
+
+    if (current >= ceil) {
+      // 被事件/共振顶过自身 ceil 后，按 10%/小时松弛回 ceil（策划书：允许短期超调，缓慢回落）
+      // 注意：只对"纯自然增长顶超"做回落；事件刚结算的超调（如 conflict→grieve）不立即压回，
+      // 由 elapsedHours 控制回落速率——elapsedHours≈0 时不衰减，给事件成果留出存活时间
+      if (elapsedHours > 0) {
+        const decay = (current - SATURATE_FLOOR) * 0.10 * elapsedHours;
+        next = clamp(Math.max(SATURATE_FLOOR, current - decay));
+        if (next > ceil) next = ceil;
+      } else {
+        next = current;
+      }
+    } else if (inPlateau) {
+      // 饱足期内自然增长暂停（真实事件仍可结算，见 applyConversationEvent）
+      next = current;
     } else {
       let rate = dim.growPerHour;
       if (isNight && dim.nightMul !== undefined) rate *= dim.nightMul;
       rate *= fatigueMultiplier;
-      next = Math.min(clamp(current + rate * elapsedHours), SATURATE_CEIL);
+      // 驱力耦合（3.2.0 体验层增量）：anger→possess 增长受抑；grieve→crave/monitor 增长受激
+      if (key === 'possess') {
+        const angerLvl = Number(state.drives.anger ?? 0);
+        rate *= (1 - 0.65 * angerLvl);
+      } else if (key === 'crave') {
+        const grieveLvl = Number(state.drives.grieve ?? 0);
+        rate *= (1 + 0.50 * grieveLvl);
+      } else if (key === 'monitor') {
+        const grieveLvl = Number(state.drives.grieve ?? 0);
+        rate *= (1 + 0.45 * grieveLvl);
+      }
+      next = Math.min(clamp(current + rate * elapsedHours), ceil);
     }
 
     if (next !== current) changed = true;
