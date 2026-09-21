@@ -146,6 +146,42 @@ Authorization: Bearer <SERVICE_TOKEN>
 | `GET` | `/v1/dashboard/connect` | 多端接入能力清单（无凭据） |
 | `POST` | `/mcp` | Streamable HTTP MCP |
 
+### 请求体字段
+
+`/v1/conversation-event` 与 `/v1/heartbeat` 共用一套请求体字段。除 `eventId` 外全部可选：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `eventId` | string | 幂等标识。带 `interactionType` 时必须提供，否则返回 `reasonCode: missing_event_id` |
+| `interactionType` | string | 互动类型，见下方取值。决定互动结果是否结算 |
+| `driveDeltas` | object | 按维度的**增量**，可正可负，逐维相加后裁剪到 0–1。例：`{"social": 0.2}` |
+| `satisfiedDrives` | string[] | 标记「已被满足」的维度，按**满足语义**处理：乘以下调系数（默认 0.40），并连带触发 `inhibitedBy` 交叉抑制 |
+| `flashThoughts` | array | 写入闪念：`[{"key": "crave", "text": "……", "intensity": 0.7}]` |
+
+驱动维度共 12 个：`possess`、`monitor`、`crave`、`share`、`libido`、`curiosity`、`boredom`、`social`、`duty`、`reflection`、`grieve`、`anger`。
+
+`interactionType` 可选值：`companionship`、`affection`、`intimacy`、`sharing`、`discovery`、`task_progress`、`reflection`、`conflict`、`loss`、`reconciliation`。
+
+两点容易踩到的语义，说明一下：
+
+`driveDeltas` 与 `satisfiedDrives` 方向相反。前者是加法，用来推高；后者是乘法下调，用来标记「这件事已经被满足了」。想让某个维度动起来，用 `driveDeltas`；想让它在被满足后回落，用 `satisfiedDrives`。
+
+响应里的 `interaction.applied` 与 `interaction.reasonCode` 只反映 `interactionType` 那一段。`driveDeltas` 和 `satisfiedDrives` 在它之后独立处理，不受这两个字段影响——`applied: false` 只表示互动结果没有结算，不代表这次请求整体没有生效。
+
+`/v1/drive-feedback` 的请求体：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `driveDeltas` | object | 同上，按维度增量。注意字段名是 `driveDeltas` 对象，不是 `delta` |
+| `eventId` | string | 可选，幂等标识 |
+
+```bash
+curl -X POST http://127.0.0.1:18110/v1/drive-feedback \
+  -H "Authorization: Bearer $SERVICE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"driveDeltas": {"social": -0.2}}'
+```
+
 ## 用户互动连接桥
 
 连接桥是可选能力，但前提是先部署好心潮。它只将用户主动发出的互动、便签与预约交给用户指定的 AI Runtime；不会自动投递梦境、思念、心潮数值或 AI 的自主内容。
