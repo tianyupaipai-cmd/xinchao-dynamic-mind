@@ -1,0 +1,31 @@
+services:
+  xinchao:
+    build: .
+    image: xinchao/dynamic-mind:2.3.3
+    container_name: xinchao-dynamic-mind
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:18110:18110"
+    volumes:
+      - ./state:/app/state
+      - ${MEMORY_DATA_HOST_PATH:-./memory-data}:/memory-data:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.50
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:18110/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

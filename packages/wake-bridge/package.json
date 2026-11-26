@@ -1,0 +1,11 @@
+{
+  "name": "@xinchao/wake-bridge-protocol",
+  "version": "0.1.0",
+  "description": "Privacy-bounded delivery envelopes for Xinchao proactive user and AI notifications.",
+  "type": "module",
+  "license": "MIT",
+  "exports": "./src/index.js",
+  "engines": {
+    "node": ">=20"
+  }
+}
