@@ -336,6 +336,15 @@ state/           运行状态挂载目录（不提交真实数据）
 memory-data/     可选外部心跳挂载目录
 ```
 
+## 致谢
+
+- [@ChenxiDawn](https://github.com/ChenxiDawn)：每股驱力的天花板、饱足平台与驱力生长耦合（PR #8）。
+- [@7k777](https://github.com/7k777)：HTTP API 请求体字段说明（PR #10）。
+- 「脉 · Pulse」DankeCompanion 身体感知教程，原作者 蛋（小红书号 844455787）：脉与念头罐的思路。
+- [Kirie](https://github.com/khaterdev/kirie)（MIT）：驱力提示「立刻说 / 攒着 / 不说」的思路。
+
+3.0.0 起仓库历史整理成了一个干净的起点，以前的提交记录保留在各自的 PR 里。
+
 ## License
 
 [MIT](LICENSE)
